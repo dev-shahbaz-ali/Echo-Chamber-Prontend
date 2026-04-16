@@ -280,6 +280,7 @@ function App() {
     useState(false);
   const [showDeleteChatConfirmModal, setShowDeleteChatConfirmModal] =
     useState(false);
+  const [messageMenuMode, setMessageMenuMode] = useState("actions");
   const [selectedMessageForContext, setSelectedMessageForContext] =
     useState(null); // For context menu actions
   const [contextMenuPosition, setContextMenuPosition] = useState({
@@ -783,6 +784,7 @@ function App() {
 
   const closeContextMenu = useCallback(() => {
     setSelectedMessageForContext(null);
+    setMessageMenuMode("actions");
   }, []);
 
   const toggleChatMenu = useCallback(() => {
@@ -858,6 +860,7 @@ function App() {
     e.preventDefault();
     if (msg.deleted) return;
     setSelectedMessageForContext(msg);
+    setMessageMenuMode("actions");
     const estimatedWidth = 220;
     const estimatedHeight = 180;
     const top = Math.min(e.clientY, window.innerHeight - estimatedHeight - 12);
@@ -897,25 +900,64 @@ function App() {
     closeContextMenu();
   }, [selectedMessageForContext, closeContextMenu]);
 
+  const openDeleteOptions = useCallback(() => {
+    setMessageMenuMode("delete-options");
+  }, []);
+
+  const handleDeleteForMe = useCallback(() => {
+    if (!selectedMessageForContext) return;
+    const messageId = selectedMessageForContext.id;
+    setMessages((prevMessages) => {
+      const nextMessages = prevMessages.filter((msg) => msg.id !== messageId);
+      saveChatMessages(activeChatNameRef.current, nextMessages);
+      return nextMessages;
+    });
+    closeContextMenu();
+  }, [selectedMessageForContext, closeContextMenu]);
+
+  const handleDeleteForEveryone = useCallback(() => {
+    if (!selectedMessageForContext) return;
+    const messageId = selectedMessageForContext.id;
+
+    setMessages((prevMessages) =>
+      prevMessages.map((msg) =>
+        msg.id === messageId
+          ? { ...msg, deleted: true, text: "This message was deleted" }
+          : msg,
+      ),
+    );
+    socket.current.send(
+      JSON.stringify({
+        type: "delete",
+        messageId,
+      }),
+    );
+    closeContextMenu();
+  }, [selectedMessageForContext, closeContextMenu]);
+
+  const handleCopyMessage = useCallback(async () => {
+    if (!selectedMessageForContext) return;
+    const copyText =
+      selectedMessageForContext.text ||
+      selectedMessageForContext.fileName ||
+      "Voice message";
+
+    try {
+      await navigator.clipboard.writeText(copyText);
+    } catch {
+      const temp = document.createElement("textarea");
+      temp.value = copyText;
+      document.body.appendChild(temp);
+      temp.select();
+      document.execCommand("copy");
+      document.body.removeChild(temp);
+    }
+    closeContextMenu();
+  }, [selectedMessageForContext, closeContextMenu]);
+
   const cancelReply = useCallback(() => {
     setReplyingTo(null);
   }, []);
-
-  const handleDelete = useCallback(
-    (type) => {
-      if (!selectedMessageForContext) return;
-      if (type === "me") {
-        setMessages((prevMessages) =>
-          prevMessages.filter((msg) => msg.id !== selectedMessageForContext.id),
-        );
-        closeContextMenu();
-      } else if (type === "everyone") {
-        setShowDeleteConfirmModal(true);
-        closeContextMenu();
-      }
-    },
-    [selectedMessageForContext, closeContextMenu],
-  );
 
   const closeClearChatModal = useCallback(() => {
     setShowClearChatConfirmModal(false);
@@ -1675,18 +1717,58 @@ function App() {
           }}
           onContextMenu={(e) => e.preventDefault()}
         >
-          <div className="menu-item" onClick={handleReply}>
-            Reply
-          </div>
-          <div
-            className="menu-item danger"
-            onClick={() => setShowClearChatConfirmModal(true)}
-          >
-            Clear Chat
-          </div>
-          <div className="menu-item cancel" onClick={closeContextMenu}>
-            Cancel
-          </div>
+          {messageMenuMode === "actions" ? (
+            <>
+              <button type="button" className="menu-item" onClick={handleReply}>
+                Reply
+              </button>
+              <button
+                type="button"
+                className="menu-item"
+                onClick={handleCopyMessage}
+              >
+                Copy message
+              </button>
+              <button
+                type="button"
+                className="menu-item danger"
+                onClick={openDeleteOptions}
+              >
+                Delete
+              </button>
+              <button
+                type="button"
+                className="menu-item cancel"
+                onClick={closeContextMenu}
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="menu-item danger"
+                onClick={handleDeleteForMe}
+              >
+                Delete for me
+              </button>
+              <button
+                type="button"
+                className="menu-item danger"
+                onClick={handleDeleteForEveryone}
+              >
+                Delete for everyone
+              </button>
+              <button
+                type="button"
+                className="menu-item cancel"
+                onClick={closeContextMenu}
+              >
+                Cancel
+              </button>
+            </>
+          )}
         </div>
       )}
 
