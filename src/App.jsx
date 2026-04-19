@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import "./App.css";
 import { emojiData as initialEmojiData } from "./emoji-data"; // Assuming this file will be created
+import { AuthProvider, useAuth } from "./context/AuthContext";
+import Login from "./pages/Login";
+import SignUp from "./pages/SignUp";
 
 // Helper to format duration for voice messages
 const formatDuration = (seconds) => {
@@ -256,7 +259,31 @@ const UiIcon = ({ name }) => {
   }
 };
 
+const SWIPE_THRESHOLD = 80; // pixels to trigger back navigation
+
+// Use environment variable for WebSocket URL for deployment
+const SOCKET_URL = import.meta.env.VITE_WS_URL || "ws://localhost:8080";
+
 function App() {
+  return (
+    <AuthProvider>
+      <AuthWrapper />
+    </AuthProvider>
+  );
+}
+
+function AuthWrapper() {
+  const { user } = useAuth();
+  const [authMode, setAuthMode] = useState("login"); // 'login' or 'signup'
+
+  if (!user) {
+    return authMode === "login" ? (
+      <Login onSwitch={() => setAuthMode("signup")} />
+    ) : (
+      <SignUp onSwitch={() => setAuthMode("login")} />
+    );
+  }
+
   const [messages, setMessages] = useState(() =>
     loadChatMessages("Shahbaz Ali"),
   );
@@ -280,6 +307,8 @@ function App() {
     useState(false);
   const [showDeleteChatConfirmModal, setShowDeleteChatConfirmModal] =
     useState(false);
+  const [showInfoSidebar, setShowInfoSidebar] = useState(false);
+  const [isMobileSidebarVisible, setIsMobileSidebarVisible] = useState(true);
   const [messageMenuMode, setMessageMenuMode] = useState("actions");
   const [selectedMessageForContext, setSelectedMessageForContext] =
     useState(null); // For context menu actions
@@ -346,10 +375,27 @@ function App() {
   const emojiBtnRef = useRef(null);
   const contextMenuRef = useRef(null);
   const chatMenuRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const messageInputRef = useRef(null);
+
+  // --- Mobile Swipe Navigation ---
+  const touchStartX = useRef(null);
+  const handleTouchStart = (e) => {
+    if (isMobileSidebarVisible) return;
+    touchStartX.current = e.touches[0].clientX;
+  };
+
+  const handleTouchEnd = (e) => {
+    if (touchStartX.current === null) return;
+    const touchEndX = e.changedTouches[0].clientX;
+    const deltaX = touchEndX - touchStartX.current;
+    if (deltaX > SWIPE_THRESHOLD) setIsMobileSidebarVisible(true);
+    touchStartX.current = null;
+  };
 
   // --- WebSocket Connection and Message Handling ---
   useEffect(() => {
-    socket.current = new WebSocket("ws://localhost:8080");
+    socket.current = new WebSocket(SOCKET_URL);
 
     socket.current.onopen = () => {
       console.log("WebSocket connected");
@@ -484,6 +530,10 @@ function App() {
   }, [messages, normalizedMessageSearch]);
   const hasMessageSearchResults =
     normalizedMessageSearch.length === 0 || filteredMessages.length > 0;
+
+  const sharedMedia = useMemo(() => {
+    return messages.filter((msg) => msg.image && !msg.deleted);
+  }, [messages]);
 
   const toggleSettingsModal = useCallback(() => {
     setShowSettingsModal((prev) => {
@@ -739,14 +789,9 @@ function App() {
           onClick={() => {
             setMessageInput((prev) => prev + emoji);
             addToRecent(emoji);
-            // Trigger input change to update send/mic button and typing status
-            const event = new Event("input", { bubbles: true });
-            const inputElement = document.getElementById("messageInput");
-            if (inputElement) {
-              inputElement.value = messageInput + emoji;
-              inputElement.dispatchEvent(event);
+            if (messageInputRef.current) {
+              messageInputRef.current.focus();
             }
-            // messageInputRef.current.focus(); // Focus back to input
           }}
         >
           {emoji}
@@ -799,7 +844,7 @@ function App() {
   }, []);
 
   const handleContactInfo = useCallback(() => {
-    setShowAvatarOverlay(true);
+    setShowInfoSidebar(true);
     closeChatMenu();
   }, [closeChatMenu]);
 
@@ -835,6 +880,7 @@ function App() {
       activeChatNameRef.current = nextChat.name;
       setMessages(loadChatMessages(nextChat.name));
     }
+    setIsMobileSidebarVisible(true);
   }, [activeChatName, chatList, deletedChatNames, closeChatMenu]);
 
   const handleReport = useCallback(() => {
@@ -1073,25 +1119,22 @@ function App() {
       setMessages(loadChatMessages(name));
       setChatSearchQuery("");
       setShowSearchBar(false);
+      setIsMobileSidebarVisible(false); // Hide sidebar on mobile after selection
     },
     [messages],
   );
 
-  const filterChatList = useCallback((event) => {
-    const query = event.target.value.toLowerCase();
-    // This would typically filter a state-managed list of chats
-    // For now, it's a placeholder.
-    console.log("Filtering chat list with:", query);
-  }, []);
-
   return (
-    <div className="app-container">
-      <aside className="sidebar">
+    <div
+      className={`app-container ${!isMobileSidebarVisible ? "chat-active" : ""}`}
+    >
+      <aside
+        className={`sidebar ${!isMobileSidebarVisible ? "hidden-mobile" : ""}`}
+      >
         <header className="sidebar-header">
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
             <div
               className="avatar"
-              id="myAvatar"
               style={{
                 width: "40px",
                 height: "40px",
@@ -1163,12 +1206,34 @@ function App() {
         </div>
       </aside>
 
-      <main className="chat-window">
+      <main
+        className={`chat-window ${isMobileSidebarVisible ? "hidden-mobile" : ""}`}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+      >
         <header className="header">
+          <button
+            className="pill-btn pill-btn-icon mobile-only"
+            onClick={() => setIsMobileSidebarVisible(true)}
+            aria-label="Back to chats"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ width: "20px" }}
+            >
+              <path d="m15 18-6-6 6-6" />
+            </svg>
+          </button>
           <div
             className="avatar"
             style={{ cursor: "pointer" }}
-            onClick={toggleAvatarOverlay}
+            onClick={() => setShowInfoSidebar(true)}
           >
             {activeChatInitials}
           </div>
@@ -1494,13 +1559,14 @@ function App() {
             <input
               type="file"
               id="fileInput"
+              ref={fileInputRef}
               className="hidden"
               onChange={handleFileSelect}
             />
             <button
               type="button"
               className="pill-btn pill-btn-subtle pill-btn-icon"
-              onClick={() => document.getElementById("fileInput").click()}
+              onClick={() => fileInputRef.current?.click()}
               aria-label="Attach file"
               title="Attach file"
             >
@@ -1520,14 +1586,17 @@ function App() {
 
             {isRecording ? (
               <div id="recordingStatus">
-                <div className="dot"></div>
-                <span>Recording</span>
+                <div className="recording-indicator">
+                  <div className="dot"></div>
+                  <span>REC</span>
+                </div>
                 <span id="recordTimer">{recordTimer}</span>
               </div>
             ) : (
               <input
                 type="text"
                 id="messageInput"
+                ref={messageInputRef}
                 placeholder="Type a message..."
                 autoComplete="off"
                 value={messageInput}
@@ -1729,6 +1798,7 @@ function App() {
               >
                 Copy message
               </button>
+              {/* Only show delete options if it's your message or if you want to allow local delete for friend messages */}
               <button
                 type="button"
                 className="menu-item danger"
@@ -1753,13 +1823,16 @@ function App() {
               >
                 Delete for me
               </button>
-              <button
-                type="button"
-                className="menu-item danger"
-                onClick={handleDeleteForEveryone}
-              >
-                Delete for everyone
-              </button>
+              {/* Logic: Only show 'Delete for everyone' if the message belongs to 'you' */}
+              {selectedMessageForContext?.side === "you" && (
+                <button
+                  type="button"
+                  className="menu-item danger"
+                  onClick={handleDeleteForEveryone}
+                >
+                  Delete for everyone
+                </button>
+              )}
               <button
                 type="button"
                 className="menu-item cancel"
@@ -1884,6 +1957,66 @@ function App() {
           </div>
         </div>
       )}
+
+      {showInfoSidebar && (
+        <aside className="info-sidebar">
+          <header className="sidebar-header">
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <button
+                type="button"
+                className="pill-btn pill-btn-icon"
+                onClick={() => setShowInfoSidebar(false)}
+              >
+                <UiIcon name="close" />
+              </button>
+              <span style={{ fontWeight: 700 }}>Contact info</span>
+            </div>
+          </header>
+          <div className="info-content">
+            <div className="info-profile">
+              <div className="avatar-large-sidebar">{activeChatInitials}</div>
+              <h2 className="info-name">{activeChatName}</h2>
+              <p className="info-status">{statusText}</p>
+            </div>
+
+            <div className="info-section">
+              <div className="info-section-title">Media, links and docs</div>
+              {sharedMedia.length > 0 ? (
+                <div className="info-media-grid">
+                  {sharedMedia.slice(0, 6).map((msg) => (
+                    <img
+                      key={msg.id}
+                      src={msg.image}
+                      alt=""
+                      className="info-media-item"
+                      onClick={() => window.open(msg.image, "_blank")}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="info-media-placeholder">No media found</div>
+              )}
+            </div>
+
+            <div className="info-section">
+              <button
+                className="chat-menu-item danger"
+                style={{ paddingInline: 0 }}
+              >
+                <UiIcon name="block" />
+                <span>Block {activeChatName}</span>
+              </button>
+              <button
+                className="chat-menu-item danger"
+                style={{ paddingInline: 0 }}
+              >
+                <UiIcon name="report" />
+                <span>Report {activeChatName}</span>
+              </button>
+            </div>
+          </div>
+        </aside>
+      )}
     </div>
   );
 }
@@ -1893,6 +2026,8 @@ const VoiceMessagePlayer = ({ src, side = "friend" }) => {
   const audioRef = useRef(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [duration, setDuration] = useState("0:00");
+  const [progress, setProgress] = useState(0);
+  const [currentTime, setCurrentTime] = useState("0:00");
 
   useEffect(() => {
     const audio = new Audio(src);
@@ -1901,17 +2036,30 @@ const VoiceMessagePlayer = ({ src, side = "friend" }) => {
     const setAudioData = () => {
       setDuration(formatDuration(audio.duration));
     };
+
     const handleEnded = () => {
       setIsPlaying(false);
+      setProgress(0);
+      setCurrentTime("0:00");
+    };
+
+    const handleTimeUpdate = () => {
+      if (audio.duration) {
+        const currentProgress = (audio.currentTime / audio.duration) * 100;
+        setProgress(currentProgress);
+        setCurrentTime(formatDuration(audio.currentTime));
+      }
     };
 
     audio.addEventListener("loadedmetadata", setAudioData);
     audio.addEventListener("ended", handleEnded);
+    audio.addEventListener("timeupdate", handleTimeUpdate);
     audio.load();
 
     return () => {
       audio.removeEventListener("loadedmetadata", setAudioData);
       audio.removeEventListener("ended", handleEnded);
+      audio.removeEventListener("timeupdate", handleTimeUpdate);
       audio.pause();
     };
   }, [src]);
@@ -1930,6 +2078,14 @@ const VoiceMessagePlayer = ({ src, side = "friend" }) => {
     [isPlaying],
   );
 
+  const handleProgressChange = (e) => {
+    const audio = audioRef.current;
+    if (!audio || !audio.duration) return;
+    const newTime = (e.target.value / 100) * audio.duration;
+    audio.currentTime = newTime;
+    setProgress(e.target.value);
+  };
+
   return (
     <div className={`voice-message ${side}`}>
       <button
@@ -1940,18 +2096,35 @@ const VoiceMessagePlayer = ({ src, side = "friend" }) => {
       >
         <UiIcon name={isPlaying ? "pause" : "play"} />
       </button>
-      <div className="voice-meta">
-        <span className="voice-label">Voice message</span>
-        <span className="voice-duration">{duration}</span>
-      </div>
-      <div className="voice-waveform">
-        {Array.from({ length: 20 }).map((_, i) => (
-          <div
-            key={i}
-            className="wave-bar"
-            style={{ height: `${8 + ((i * 5) % 14)}px` }}
-          ></div>
-        ))}
+      <div className="voice-content">
+        <div className="voice-progress-container">
+          <input
+            type="range"
+            className="voice-progress-slider"
+            value={progress}
+            onChange={handleProgressChange}
+            onClick={(e) => e.stopPropagation()}
+            step="0.1"
+          />
+          <div className="voice-waveform">
+            {Array.from({ length: 24 }).map((_, i) => (
+              <div
+                key={i}
+                className="wave-bar"
+                style={{
+                  height: `${10 + ((i * 3) % 12)}px`,
+                  opacity: (i / 24) * 100 < progress ? 1 : 0.4,
+                  transition: "height 0.2s ease, opacity 0.2s ease",
+                }}
+              ></div>
+            ))}
+          </div>
+        </div>
+        <div className="voice-meta">
+          <span className="voice-duration">
+            {isPlaying ? currentTime : duration}
+          </span>
+        </div>
       </div>
     </div>
   );
