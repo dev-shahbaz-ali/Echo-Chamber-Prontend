@@ -273,8 +273,17 @@ function App() {
 }
 
 function AuthWrapper() {
-  const { user } = useAuth();
+  const { user, isLoading } = useAuth();
   const [authMode, setAuthMode] = useState("login"); // 'login' or 'signup'
+
+  if (isLoading) {
+    return (
+      <div className="loading-screen">
+        <div className="loader"></div>
+        <div className="loading-text">ECHO CHAMBER</div>
+      </div>
+    );
+  }
 
   if (!user) {
     return authMode === "login" ? (

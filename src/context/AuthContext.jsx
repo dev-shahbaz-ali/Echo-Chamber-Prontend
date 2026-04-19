@@ -3,10 +3,18 @@ import { createContext, useContext, useState, useEffect } from "react";
 const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(() => {
+  const [user, setUser] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
     const savedUser = localStorage.getItem("echo_user");
-    return savedUser ? JSON.parse(savedUser) : null;
-  });
+    if (savedUser) {
+      setUser(JSON.parse(savedUser));
+    }
+    // Artificial delay for modern feel
+    const timer = setTimeout(() => setIsLoading(false), 800);
+    return () => clearTimeout(timer);
+  }, []);
 
   const signup = (userData) => {
     // In a real app, this would be an API call
@@ -36,7 +44,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, signup, login, logout }}>
+    <AuthContext.Provider value={{ user, signup, login, logout, isLoading }}>
       {children}
     </AuthContext.Provider>
   );
