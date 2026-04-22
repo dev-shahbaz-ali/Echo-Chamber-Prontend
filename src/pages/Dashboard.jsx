@@ -1,46 +1,83 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../context/AuthContext";
-import {
-  BsWhatsapp,
-  BsSearch,
-  BsChat,
-  BsArrowLeft,
-  BsSend,
-  BsThreeDotsVertical,
-} from "react-icons/bs";
+import ChatList from "../components/ChatList";
+import ChatWindow from "../components/ChatWindow";
+import { BsWhatsapp, BsSearch, BsArrowLeft } from "react-icons/bs";
 
 function Dashboard() {
   const { user, logout } = useAuth();
-  const [users, setUsers] = useState([]);
+  const [chats, setChats] = useState([]);
+  const [selectedChat, setSelectedChat] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
-  const [selectedUser, setSelectedUser] = useState(null);
-  const [messages, setMessages] = useState([]);
-  const [inputMessage, setInputMessage] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(true);
+  const [ws, setWs] = useState(null);
 
   const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
-  // Fetch all users
+  // Initialize WebSocket
   useEffect(() => {
-    fetchUsers();
+    const token = localStorage.getItem("token");
+    if (!token) return;
+
+    const websocket = new WebSocket("ws://localhost:5000");
+
+    websocket.onopen = () => {
+      websocket.send(
+        JSON.stringify({
+          type: "auth",
+          token: token,
+        }),
+      );
+    };
+
+    websocket.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+
+      if (data.type === "new_message") {
+        // Refresh chats to update last message
+        fetchChats();
+
+        // If the message is for current chat, add it to messages
+        if (selectedChat && data.message.chatId === selectedChat._id) {
+          // ChatWindow will handle this via props
+        }
+      }
+
+      if (data.type === "typing") {
+        // Handle typing indicator
+        console.log("User typing:", data);
+      }
+    };
+
+    setWs(websocket);
+
+    return () => {
+      websocket.close();
+    };
   }, []);
 
-  const fetchUsers = async () => {
+  // Fetch all chats
+  const fetchChats = useCallback(async () => {
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`${API_URL}/users`, {
+      const response = await fetch(`${API_URL}/chats`, {
         headers: {
           "x-auth-token": token,
         },
       });
       const data = await response.json();
-      setUsers(data);
+      setChats(data);
     } catch (error) {
-      console.error("Error fetching users:", error);
+      console.error("Error fetching chats:", error);
     }
-  };
+  }, [API_URL]);
 
+  useEffect(() => {
+    fetchChats();
+  }, [fetchChats]);
+
+  // Search users
   const searchUsers = async (query) => {
     if (!query.trim()) {
       setSearchResults([]);
@@ -61,73 +98,86 @@ function Dashboard() {
     }
   };
 
+  // Create or get chat with a user
+  const createOrGetChat = async (otherUserId) => {
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${API_URL}/chats`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-auth-token": token,
+        },
+        body: JSON.stringify({ otherUserId }),
+      });
+
+      const chat = await response.json();
+
+      if (response.ok) {
+        setSelectedChat(chat);
+        fetchChats(); // Refresh chat list
+        setSearchQuery("");
+        setSearchResults([]);
+        if (window.innerWidth < 768) {
+          setShowSidebar(false);
+        }
+      }
+    } catch (error) {
+      console.error("Error creating chat:", error);
+    }
+  };
+
+  // Send message
+  const sendMessage = async (chatId, message) => {
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${API_URL}/chats/${chatId}/messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-auth-token": token,
+        },
+        body: JSON.stringify({ message }),
+      });
+
+      const newMessage = await response.json();
+
+      if (response.ok) {
+        // Update chat list to show last message
+        fetchChats();
+        return newMessage;
+      }
+    } catch (error) {
+      console.error("Error sending message:", error);
+    }
+    return null;
+  };
+
+  // Handle typing indicator
+  const handleTyping = (chatId, isTyping) => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(
+        JSON.stringify({
+          type: "typing",
+          chatId,
+          isTyping,
+        }),
+      );
+    }
+  };
+
   const handleSearch = (e) => {
     const query = e.target.value;
     setSearchQuery(query);
     searchUsers(query);
   };
 
-  const startChat = (selectedUser) => {
-    setSelectedUser(selectedUser);
-    fetchMessages(selectedUser._id);
-  };
-
-  const fetchMessages = async (otherUserId) => {
-    try {
-      const token = localStorage.getItem("token");
-      const response = await fetch(
-        `${API_URL}/messages/${user.id}/${otherUserId}`,
-        {
-          headers: {
-            "x-auth-token": token,
-          },
-        },
-      );
-      const data = await response.json();
-      setMessages(data);
-    } catch (error) {
-      console.error("Error fetching messages:", error);
-    }
-  };
-
-  const sendMessage = async () => {
-    if (!inputMessage.trim() || !selectedUser) return;
-
-    try {
-      const token = localStorage.getItem("token");
-      const response = await fetch(`${API_URL}/messages`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-auth-token": token,
-        },
-        body: JSON.stringify({
-          receiverId: selectedUser._id,
-          message: inputMessage,
-        }),
-      });
-
-      if (response.ok) {
-        const newMessage = await response.json();
-        setMessages([...messages, newMessage]);
-        setInputMessage("");
-      }
-    } catch (error) {
-      console.error("Error sending message:", error);
-    }
-  };
-
-  const handleKeyPress = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  };
-
   return (
     <div className="h-screen flex bg-gray-900">
       {/* Sidebar */}
-      <div className="w-96 bg-gray-800 border-r border-gray-700 flex flex-col">
+      <div
+        className={`${showSidebar ? "w-full md:w-96" : "hidden md:block md:w-96"} bg-gray-800 border-r border-gray-700 flex flex-col`}
+      >
         {/* User Info */}
         <div className="bg-gray-700 p-4 flex items-center justify-between">
           <div className="flex items-center space-x-3">
@@ -145,7 +195,7 @@ function Dashboard() {
             onClick={logout}
             className="text-gray-400 hover:text-white transition-colors"
           >
-            <BsThreeDotsVertical size={20} />
+            Logout
           </button>
         </div>
 
@@ -155,7 +205,7 @@ function Dashboard() {
             <BsSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
             <input
               type="text"
-              placeholder="Search users..."
+              placeholder="Search users to start chat..."
               value={searchQuery}
               onChange={handleSearch}
               className="w-full pl-10 pr-4 py-2 bg-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
@@ -163,139 +213,68 @@ function Dashboard() {
           </div>
         </div>
 
-        {/* Users List */}
-        <div className="flex-1 overflow-y-auto">
-          {loading ? (
-            <div className="text-center text-gray-400 py-8">Loading...</div>
-          ) : searchResults.length > 0 ? (
-            searchResults.map((user) => (
+        {/* Search Results or Chat List */}
+        {searchResults.length > 0 ? (
+          <div className="flex-1 overflow-y-auto">
+            <div className="px-4 py-2 text-xs text-gray-400">
+              SEARCH RESULTS
+            </div>
+            {searchResults.map((searchUser) => (
               <div
-                key={user._id}
-                onClick={() => startChat(user)}
-                className={`flex items-center space-x-3 p-3 hover:bg-gray-700 cursor-pointer transition-colors ${
-                  selectedUser?._id === user._id ? "bg-gray-700" : ""
-                }`}
+                key={searchUser._id}
+                onClick={() => createOrGetChat(searchUser._id)}
+                className="flex items-center space-x-3 p-3 hover:bg-gray-700 cursor-pointer transition-colors"
               >
                 <img
-                  src={user.avatar}
-                  alt={user.username}
+                  src={searchUser.avatar}
+                  alt={searchUser.username}
                   className="w-12 h-12 rounded-full object-cover"
                 />
                 <div className="flex-1">
-                  <h3 className="font-semibold text-white">{user.username}</h3>
+                  <h3 className="font-semibold text-white">
+                    {searchUser.username}
+                  </h3>
                   <p className="text-sm text-gray-400 truncate">
-                    {user.status}
+                    {searchUser.status}
                   </p>
                 </div>
+                <button className="bg-green-500 text-white px-3 py-1 rounded-lg text-sm hover:bg-green-600">
+                  Message
+                </button>
               </div>
-            ))
-          ) : (
-            users.map((user) => (
-              <div
-                key={user._id}
-                onClick={() => startChat(user)}
-                className={`flex items-center space-x-3 p-3 hover:bg-gray-700 cursor-pointer transition-colors ${
-                  selectedUser?._id === user._id ? "bg-gray-700" : ""
-                }`}
-              >
-                <img
-                  src={user.avatar}
-                  alt={user.username}
-                  className="w-12 h-12 rounded-full object-cover"
-                />
-                <div className="flex-1">
-                  <h3 className="font-semibold text-white">{user.username}</h3>
-                  <p className="text-sm text-gray-400 truncate">
-                    {user.status}
-                  </p>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <ChatList
+            chats={chats}
+            onSelectChat={(chat) => {
+              setSelectedChat(chat);
+              if (window.innerWidth < 768) {
+                setShowSidebar(false);
+              }
+            }}
+            selectedChatId={selectedChat?._id}
+            currentUser={user}
+          />
+        )}
       </div>
 
       {/* Chat Area */}
       <div className="flex-1 flex flex-col">
-        {selectedUser ? (
+        {selectedChat ? (
           <>
-            {/* Chat Header */}
-            <div className="bg-gray-800 p-4 flex items-center space-x-3 border-b border-gray-700">
-              <button
-                onClick={() => setSelectedUser(null)}
-                className="md:hidden text-white"
-              >
-                <BsArrowLeft size={20} />
-              </button>
-              <img
-                src={selectedUser.avatar}
-                alt={selectedUser.username}
-                className="w-10 h-10 rounded-full object-cover"
-              />
-              <div>
-                <h3 className="font-semibold text-white">
-                  {selectedUser.username}
-                </h3>
-                <p className="text-xs text-green-500">Online</p>
-              </div>
-            </div>
-
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {messages.length === 0 ? (
-                <div className="text-center text-gray-500 mt-20">
-                  <BsChat className="text-4xl mx-auto mb-2" />
-                  <p>
-                    No messages yet. Start chatting with {selectedUser.username}
-                  </p>
-                </div>
-              ) : (
-                messages.map((msg) => (
-                  <div
-                    key={msg._id}
-                    className={`flex ${
-                      msg.sender_id === user?.id
-                        ? "justify-end"
-                        : "justify-start"
-                    }`}
-                  >
-                    <div
-                      className={`max-w-[70%] px-4 py-2 rounded-2xl ${
-                        msg.sender_id === user?.id
-                          ? "bg-green-500 text-white rounded-tr-none"
-                          : "bg-gray-700 text-white rounded-tl-none"
-                      }`}
-                    >
-                      <p className="text-sm break-words">{msg.message}</p>
-                      <div className="text-xs opacity-70 mt-1 text-right">
-                        {new Date(msg.created_at).toLocaleTimeString()}
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            {/* Input Area */}
-            <div className="bg-gray-800 p-4 border-t border-gray-700">
-              <div className="flex space-x-3">
-                <input
-                  type="text"
-                  value={inputMessage}
-                  onChange={(e) => setInputMessage(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  placeholder="Type a message..."
-                  className="flex-1 px-4 py-2 bg-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
-                />
-                <button
-                  onClick={sendMessage}
-                  disabled={!inputMessage.trim()}
-                  className="px-6 py-2 bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <BsSend size={20} />
-                </button>
-              </div>
-            </div>
+            <button
+              onClick={() => setShowSidebar(true)}
+              className="md:hidden absolute top-4 left-4 z-10 bg-gray-800 p-2 rounded-lg text-white"
+            >
+              <BsArrowLeft size={20} />
+            </button>
+            <ChatWindow
+              chat={selectedChat}
+              currentUser={user}
+              onSendMessage={sendMessage}
+              onTyping={handleTyping}
+            />
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center">
@@ -304,7 +283,9 @@ function Dashboard() {
               <h2 className="text-2xl font-semibold text-white mb-2">
                 WhatsApp Clone
               </h2>
-              <p className="text-gray-400">Select a user to start chatting</p>
+              <p className="text-gray-400">
+                Select a chat or search for users to start messaging
+              </p>
             </div>
           </div>
         )}
