@@ -60,7 +60,7 @@ function Dashboard() {
     setActiveTab("friends");
   };
 
-  const sendMessage = async (chatId, message) => {
+  const sendMessage = async (chatId, message, extraData = {}) => {
     try {
       const token = localStorage.getItem("token");
       const response = await fetch(`${API_URL}/chats/${chatId}/messages`, {
@@ -69,7 +69,7 @@ function Dashboard() {
           "Content-Type": "application/json",
           "x-auth-token": token,
         },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, ...extraData }),
       });
 
       if (response.ok) {

@@ -22,9 +22,61 @@ function ChatWindow({ chat, currentUser, onSendMessage, onTyping, ws }) {
   const audioRef = useRef(null);
 
   const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+  const currentUserId = currentUser?._id || currentUser?.id;
   const otherUser =
     chat?.otherParticipant ||
-    chat?.participants?.find((p) => p._id !== currentUser?.id);
+    chat?.participants?.find((p) => (p._id || p.id) !== currentUserId);
+
+  const upsertMessage = useCallback((incomingMessage) => {
+    if (!incomingMessage) return;
+
+    setMessages((prev) => {
+      const incomingId = incomingMessage._id || incomingMessage.id;
+      const incomingSenderId =
+        incomingMessage.senderId?._id ||
+        incomingMessage.senderId ||
+        incomingMessage.sender_id;
+      const incomingChatId = incomingMessage.chatId;
+      const incomingText = incomingMessage.message || "";
+      const incomingType = incomingMessage.messageType || "text";
+      const incomingCreatedAt = incomingMessage.createdAt
+        ? new Date(incomingMessage.createdAt).getTime()
+        : null;
+
+      const existingIndex = prev.findIndex((msg) => {
+        const msgId = msg._id || msg.id;
+        if (msgId === incomingId) return true;
+
+        const msgSenderId = msg.senderId?._id || msg.senderId || msg.sender_id;
+        const msgChatId = msg.chatId;
+        const msgText = msg.message || "";
+        const msgType = msg.messageType || "text";
+        const msgCreatedAt = msg.createdAt
+          ? new Date(msg.createdAt).getTime()
+          : null;
+
+        const sameCoreData =
+          msgSenderId === incomingSenderId &&
+          msgChatId === incomingChatId &&
+          msgText === incomingText &&
+          msgType === incomingType;
+
+        if (!sameCoreData) return false;
+
+        if (!msgCreatedAt || !incomingCreatedAt) return true;
+
+        return Math.abs(msgCreatedAt - incomingCreatedAt) < 5000;
+      });
+
+      if (existingIndex !== -1) {
+        const next = [...prev];
+        next[existingIndex] = incomingMessage;
+        return next;
+      }
+
+      return [...prev, incomingMessage];
+    });
+  }, []);
 
   useEffect(() => {
     if (chat) {
@@ -43,7 +95,7 @@ function ChatWindow({ chat, currentUser, onSendMessage, onTyping, ws }) {
         const data = JSON.parse(event.data);
 
         if (data.type === "receive_message" && data.chatId === chat?._id) {
-          setMessages((prev) => [...prev, data.message]);
+          upsertMessage(data.message);
           markMessagesAsRead([data.message._id]);
         }
 
@@ -53,15 +105,11 @@ function ChatWindow({ chat, currentUser, onSendMessage, onTyping, ws }) {
         }
 
         if (data.type === "message_sent") {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg._id === data.message._id ? data.message : msg,
-            ),
-          );
+          upsertMessage(data.message);
         }
       };
     }
-  }, [ws, chat]);
+  }, [ws, chat, upsertMessage]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -94,7 +142,9 @@ function ChatWindow({ chat, currentUser, onSendMessage, onTyping, ws }) {
 
   const markMessagesAsRead = async (messageIds = null) => {
     const unreadMessages = messages.filter(
-      (m) => m.receiverId === currentUser?.id && !m.isRead,
+      (m) =>
+        (m.receiverId?._id || m.receiverId || m.receiver_id) === currentUserId &&
+        !m.isRead,
     );
     if (unreadMessages.length === 0) return;
 
@@ -127,34 +177,22 @@ function ChatWindow({ chat, currentUser, onSendMessage, onTyping, ws }) {
     const tempMessage = {
       _id: Date.now(),
       message: messageText,
-      senderId: currentUser.id,
-      receiverId: otherUser._id,
+      senderId: currentUserId,
+      receiverId: otherUser._id || otherUser.id,
       chatId: chat._id,
-      createdAt: new Date(),
+      createdAt: new Date().toISOString(),
       isRead: false,
       isDelivered: true,
       messageType: "text",
     };
     setMessages((prev) => [...prev, tempMessage]);
 
-    // Send via WebSocket for real-time
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(
-        JSON.stringify({
-          type: "new_message",
-          chatId: chat._id,
-          message: messageText,
-          messageType: "text",
-        }),
-      );
-    }
-
-    // Also save to database via REST API
     const result = await onSendMessage(chat._id, messageText);
     if (result) {
-      setMessages((prev) =>
-        prev.map((m) => (m._id === tempMessage._id ? result : m)),
-      );
+      upsertMessage({
+        ...result,
+        _id: result._id || tempMessage._id,
+      });
     }
   };
 
@@ -163,30 +201,32 @@ function ChatWindow({ chat, currentUser, onSendMessage, onTyping, ws }) {
     const tempMessage = {
       _id: Date.now(),
       message: "🎤 Voice message",
-      senderId: currentUser.id,
-      receiverId: otherUser._id,
+      senderId: currentUserId,
+      receiverId: otherUser._id || otherUser.id,
       chatId: chat._id,
-      createdAt: new Date(),
+      createdAt: new Date().toISOString(),
       isRead: false,
       isDelivered: true,
       messageType: "voice",
-      voiceUrl: voiceUrl,
+      voiceUrl,
       voiceDuration: duration,
     };
     setMessages((prev) => [...prev, tempMessage]);
 
-    // Send via WebSocket
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(
-        JSON.stringify({
-          type: "new_message",
-          chatId: chat._id,
-          message: "",
-          messageType: "voice",
-          voiceUrl: voiceUrl,
-          voiceDuration: duration,
-        }),
-      );
+    const result = await onSendMessage(chat._id, "", {
+      messageType: "voice",
+      voiceUrl,
+      voiceDuration: duration,
+    });
+
+    if (result) {
+      upsertMessage({
+        ...result,
+        _id: result._id || tempMessage._id,
+        messageType: "voice",
+        voiceUrl,
+        voiceDuration: duration,
+      });
     }
   };
 
@@ -300,8 +340,9 @@ function ChatWindow({ chat, currentUser, onSendMessage, onTyping, ws }) {
 
         {messages.map((msg, idx) => {
           const isOwn =
-            msg.senderId === currentUser.id ||
-            msg.senderId?._id === currentUser.id;
+            msg.senderId === currentUserId ||
+            msg.senderId?._id === currentUserId ||
+            msg.sender_id === currentUserId;
 
           return (
             <div

@@ -30,6 +30,15 @@ const readResponseError = async (response) => {
   }
 };
 
+const normalizeUser = (userData) => {
+  if (!userData) return userData;
+
+  return {
+    ...userData,
+    id: userData.id || userData._id,
+  };
+};
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -77,7 +86,7 @@ export const AuthProvider = ({ children }) => {
 
       if (response.ok) {
         const userData = await response.json();
-        setUser(userData.user || userData);
+        setUser(normalizeUser(userData.user || userData));
         setIsAuthenticated(true);
       } else {
         localStorage.removeItem("token");
@@ -107,7 +116,7 @@ export const AuthProvider = ({ children }) => {
       }
 
       localStorage.setItem("token", data.token);
-      setUser(data.user || data);
+      setUser(normalizeUser(data.user || data));
       setIsAuthenticated(true);
       toast.success("Login successful!");
       return { success: true };
@@ -135,7 +144,7 @@ export const AuthProvider = ({ children }) => {
       }
 
       localStorage.setItem("token", data.token);
-      setUser(data.user || data);
+      setUser(normalizeUser(data.user || data));
       setIsAuthenticated(true);
       toast.success("Registration successful!");
       return { success: true };
