@@ -8,7 +8,7 @@ import { BsWhatsapp, BsPeople, BsPersonAdd, BsBell } from "react-icons/bs";
 function Dashboard() {
   const { user, logout } = useAuth();
   const [selectedChat, setSelectedChat] = useState(null);
-  const [activeTab, setActiveTab] = useState("friends"); // 'friends' or 'requests'
+  const [activeTab, setActiveTab] = useState("friends");
   const [showSidebar, setShowSidebar] = useState(true);
   const [ws, setWs] = useState(null);
   const [notificationCount, setNotificationCount] = useState(0);
@@ -39,8 +39,12 @@ function Dashboard() {
       }
 
       if (data.type === "friend_request_accepted") {
-        // Refresh friends list and chat
         window.location.reload();
+      }
+
+      if (data.type === "friend_status_change") {
+        // Update friend status in UI
+        console.log("Friend status changed:", data);
       }
     };
 
@@ -68,10 +72,8 @@ function Dashboard() {
         body: JSON.stringify({ message }),
       });
 
-      const newMessage = await response.json();
-
       if (response.ok) {
-        return newMessage;
+        return await response.json();
       }
     } catch (error) {
       console.error("Error sending message:", error);
@@ -186,6 +188,7 @@ function Dashboard() {
               currentUser={user}
               onSendMessage={sendMessage}
               onTyping={handleTyping}
+              ws={ws}
             />
           </>
         ) : (
