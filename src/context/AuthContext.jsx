@@ -1,59 +1,169 @@
-import { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useState, useContext, useEffect } from "react";
+import toast from "react-hot-toast";
 
 const AuthContext = createContext();
 
+export const useAuth = () => useContext(AuthContext);
+
+// API URL
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
-  useEffect(() => {
-    const savedUser = localStorage.getItem("echo_user");
-    if (savedUser) {
-      setUser(JSON.parse(savedUser));
+  // Helper function for fetch requests
+  const fetchWithConfig = async (url, options = {}) => {
+    const token = localStorage.getItem("token");
+    const defaultHeaders = {
+      "Content-Type": "application/json",
+      ...(token && { "x-auth-token": token }),
+      ...options.headers,
+    };
+
+    const response = await fetch(`${API_URL}${url}`, {
+      ...options,
+      headers: defaultHeaders,
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || "Request failed");
     }
-    // Artificial delay for modern feel
-    const timer = setTimeout(() => setIsLoading(false), 800);
-    return () => clearTimeout(timer);
+
+    return response.json();
+  };
+
+  // Load user on mount
+  useEffect(() => {
+    loadUser();
   }, []);
 
-  const signup = (userData) => {
-    // In a real app, this would be an API call
-    const newUser = { ...userData, id: Date.now() };
-    localStorage.setItem("echo_user", JSON.stringify(newUser));
-    setUser(newUser);
-    return true;
-  };
+  const loadUser = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        setLoading(false);
+        return;
+      }
 
-  const login = (email, password) => {
-    // Simplified login simulation
-    const savedUser = JSON.parse(localStorage.getItem("echo_user"));
-    if (
-      savedUser &&
-      savedUser.email === email &&
-      savedUser.password === password
-    ) {
-      setUser(savedUser);
-      return true;
+      const response = await fetch(`${API_URL}/auth/me`, {
+        headers: {
+          "x-auth-token": token,
+        },
+      });
+
+      if (response.ok) {
+        const userData = await response.json();
+        setUser(userData);
+        setIsAuthenticated(true);
+      } else {
+        localStorage.removeItem("token");
+      }
+    } catch (error) {
+      console.error("Error loading user:", error);
+      localStorage.removeItem("token");
+    } finally {
+      setLoading(false);
     }
-    return false;
   };
 
-  const logout = () => {
-    localStorage.removeItem("echo_user");
-    setUser(null);
+  const login = async (email, password) => {
+    try {
+      const response = await fetch(`${API_URL}/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Login failed");
+      }
+
+      localStorage.setItem("token", data.token);
+      setUser(data.user);
+      setIsAuthenticated(true);
+      toast.success("Login successful!");
+      return { success: true };
+    } catch (error) {
+      console.error("Login error:", error);
+      toast.error(error.message);
+      return { success: false, error: error.message };
+    }
+  };
+
+  const register = async (userData) => {
+    try {
+      const response = await fetch(`${API_URL}/auth/register`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(userData),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Registration failed");
+      }
+
+      localStorage.setItem("token", data.token);
+      setUser(data.user);
+      setIsAuthenticated(true);
+      toast.success("Registration successful!");
+      return { success: true };
+    } catch (error) {
+      console.error("Registration error:", error);
+      toast.error(error.message);
+      return { success: false, error: error.message };
+    }
+  };
+
+  const logout = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      if (token) {
+        await fetch(`${API_URL}/auth/logout`, {
+          method: "POST",
+          headers: {
+            "x-auth-token": token,
+          },
+        });
+      }
+    } catch (error) {
+      console.error("Logout error:", error);
+    } finally {
+      localStorage.removeItem("token");
+      setUser(null);
+      setIsAuthenticated(false);
+      toast.success("Logged out successfully");
+    }
+  };
+
+  const updateUser = (updatedUser) => {
+    setUser(updatedUser);
   };
 
   return (
-    <AuthContext.Provider value={{ user, signup, login, logout, isLoading }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        loading,
+        isAuthenticated,
+        login,
+        register,
+        logout,
+        updateUser,
+        fetchWithConfig,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
-};
-
-export const useAuth = () => {
-  const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error("useAuth must be used within an AuthProvider");
-  }
-  return context;
 };
