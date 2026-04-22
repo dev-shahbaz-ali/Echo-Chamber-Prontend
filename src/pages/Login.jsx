@@ -16,6 +16,7 @@ function Login() {
   });
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -27,10 +28,13 @@ function Login() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
+    setError("");
 
     const result = await login(formData.email, formData.password);
     if (result.success) {
       navigate("/dashboard");
+    } else {
+      setError(result.error || "Login failed. Please try again.");
     }
 
     setLoading(false);
@@ -91,6 +95,12 @@ function Login() {
             </div>
           </div>
 
+          {error && (
+            <div className="rounded-lg border border-red-500 bg-red-500/10 p-3 text-sm text-red-300">
+              {error}
+            </div>
+          )}
+
           {/* Button */}
           <button
             type="submit"
@@ -109,15 +119,6 @@ function Login() {
           </div>
 
           {/* Demo Box */}
-          <div className="mt-4 p-3 bg-white/5 border border-white/10 rounded-lg text-xs text-gray-400 text-center">
-            Demo Accounts:
-            <br />
-            📧 alice@example.com / password123
-            <br />
-            📧 bob@example.com / password123
-            <br />
-            📧 charlie@example.com / password123
-          </div>
         </form>
       </div>
     </div>

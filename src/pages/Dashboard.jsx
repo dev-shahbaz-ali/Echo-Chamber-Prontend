@@ -1,17 +1,17 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../context/AuthContext";
-import ChatList from "../components/ChatList";
+import FriendsList from "../components/FriendsList";
+import FriendRequests from "../components/FriendRequests";
 import ChatWindow from "../components/ChatWindow";
-import { BsWhatsapp, BsSearch, BsArrowLeft } from "react-icons/bs";
+import { BsWhatsapp, BsPeople, BsPersonAdd, BsBell } from "react-icons/bs";
 
 function Dashboard() {
   const { user, logout } = useAuth();
-  const [chats, setChats] = useState([]);
   const [selectedChat, setSelectedChat] = useState(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState([]);
+  const [activeTab, setActiveTab] = useState("friends"); // 'friends' or 'requests'
   const [showSidebar, setShowSidebar] = useState(true);
   const [ws, setWs] = useState(null);
+  const [notificationCount, setNotificationCount] = useState(0);
 
   const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
@@ -34,19 +34,13 @@ function Dashboard() {
     websocket.onmessage = (event) => {
       const data = JSON.parse(event.data);
 
-      if (data.type === "new_message") {
-        // Refresh chats to update last message
-        fetchChats();
-
-        // If the message is for current chat, add it to messages
-        if (selectedChat && data.message.chatId === selectedChat._id) {
-          // ChatWindow will handle this via props
-        }
+      if (data.type === "friend_request_received") {
+        setNotificationCount((prev) => prev + 1);
       }
 
-      if (data.type === "typing") {
-        // Handle typing indicator
-        console.log("User typing:", data);
+      if (data.type === "friend_request_accepted") {
+        // Refresh friends list and chat
+        window.location.reload();
       }
     };
 
@@ -57,77 +51,11 @@ function Dashboard() {
     };
   }, []);
 
-  // Fetch all chats
-  const fetchChats = useCallback(async () => {
-    try {
-      const token = localStorage.getItem("token");
-      const response = await fetch(`${API_URL}/chats`, {
-        headers: {
-          "x-auth-token": token,
-        },
-      });
-      const data = await response.json();
-      setChats(data);
-    } catch (error) {
-      console.error("Error fetching chats:", error);
-    }
-  }, [API_URL]);
-
-  useEffect(() => {
-    fetchChats();
-  }, [fetchChats]);
-
-  // Search users
-  const searchUsers = async (query) => {
-    if (!query.trim()) {
-      setSearchResults([]);
-      return;
-    }
-
-    try {
-      const token = localStorage.getItem("token");
-      const response = await fetch(`${API_URL}/users/search?q=${query}`, {
-        headers: {
-          "x-auth-token": token,
-        },
-      });
-      const data = await response.json();
-      setSearchResults(data);
-    } catch (error) {
-      console.error("Error searching users:", error);
-    }
+  const handleRequestAction = () => {
+    setNotificationCount(0);
+    setActiveTab("friends");
   };
 
-  // Create or get chat with a user
-  const createOrGetChat = async (otherUserId) => {
-    try {
-      const token = localStorage.getItem("token");
-      const response = await fetch(`${API_URL}/chats`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-auth-token": token,
-        },
-        body: JSON.stringify({ otherUserId }),
-      });
-
-      const chat = await response.json();
-
-      if (response.ok) {
-        setSelectedChat(chat);
-        fetchChats(); // Refresh chat list
-        setSearchQuery("");
-        setSearchResults([]);
-        if (window.innerWidth < 768) {
-          setShowSidebar(false);
-        }
-      }
-    } catch (error) {
-      console.error("Error creating chat:", error);
-    }
-  };
-
-  // Send message
   const sendMessage = async (chatId, message) => {
     try {
       const token = localStorage.getItem("token");
@@ -143,8 +71,6 @@ function Dashboard() {
       const newMessage = await response.json();
 
       if (response.ok) {
-        // Update chat list to show last message
-        fetchChats();
         return newMessage;
       }
     } catch (error) {
@@ -153,7 +79,6 @@ function Dashboard() {
     return null;
   };
 
-  // Handle typing indicator
   const handleTyping = (chatId, isTyping) => {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(
@@ -164,12 +89,6 @@ function Dashboard() {
         }),
       );
     }
-  };
-
-  const handleSearch = (e) => {
-    const query = e.target.value;
-    setSearchQuery(query);
-    searchUsers(query);
   };
 
   return (
@@ -199,64 +118,57 @@ function Dashboard() {
           </button>
         </div>
 
-        {/* Search Bar */}
-        <div className="p-3">
-          <div className="relative">
-            <BsSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search users to start chat..."
-              value={searchQuery}
-              onChange={handleSearch}
-              className="w-full pl-10 pr-4 py-2 bg-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500"
-            />
-          </div>
+        {/* Tabs */}
+        <div className="flex border-b border-gray-700">
+          <button
+            onClick={() => setActiveTab("friends")}
+            className={`flex-1 py-3 text-center transition-colors ${
+              activeTab === "friends"
+                ? "text-green-500 border-b-2 border-green-500"
+                : "text-gray-400 hover:text-white"
+            }`}
+          >
+            <BsPeople className="inline mr-2" />
+            Friends
+          </button>
+          <button
+            onClick={() => setActiveTab("requests")}
+            className={`flex-1 py-3 text-center transition-colors relative ${
+              activeTab === "requests"
+                ? "text-green-500 border-b-2 border-green-500"
+                : "text-gray-400 hover:text-white"
+            }`}
+          >
+            <BsPersonAdd className="inline mr-2" />
+            Requests
+            {notificationCount > 0 && (
+              <span className="absolute top-1 right-4 bg-red-500 text-white text-xs rounded-full px-2 py-0.5">
+                {notificationCount}
+              </span>
+            )}
+          </button>
         </div>
 
-        {/* Search Results or Chat List */}
-        {searchResults.length > 0 ? (
-          <div className="flex-1 overflow-y-auto">
-            <div className="px-4 py-2 text-xs text-gray-400">
-              SEARCH RESULTS
-            </div>
-            {searchResults.map((searchUser) => (
-              <div
-                key={searchUser._id}
-                onClick={() => createOrGetChat(searchUser._id)}
-                className="flex items-center space-x-3 p-3 hover:bg-gray-700 cursor-pointer transition-colors"
-              >
-                <img
-                  src={searchUser.avatar}
-                  alt={searchUser.username}
-                  className="w-12 h-12 rounded-full object-cover"
-                />
-                <div className="flex-1">
-                  <h3 className="font-semibold text-white">
-                    {searchUser.username}
-                  </h3>
-                  <p className="text-sm text-gray-400 truncate">
-                    {searchUser.status}
-                  </p>
-                </div>
-                <button className="bg-green-500 text-white px-3 py-1 rounded-lg text-sm hover:bg-green-600">
-                  Message
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <ChatList
-            chats={chats}
-            onSelectChat={(chat) => {
-              setSelectedChat(chat);
-              if (window.innerWidth < 768) {
-                setShowSidebar(false);
-              }
-            }}
-            selectedChatId={selectedChat?._id}
-            currentUser={user}
-          />
-        )}
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto">
+          {activeTab === "friends" ? (
+            <FriendsList
+              onSelectChat={(chat) => {
+                setSelectedChat(chat);
+                if (window.innerWidth < 768) {
+                  setShowSidebar(false);
+                }
+              }}
+              selectedChatId={selectedChat?._id}
+              currentUser={user}
+            />
+          ) : (
+            <FriendRequests
+              onRequestAction={handleRequestAction}
+              currentUser={user}
+            />
+          )}
+        </div>
       </div>
 
       {/* Chat Area */}
@@ -267,7 +179,7 @@ function Dashboard() {
               onClick={() => setShowSidebar(true)}
               className="md:hidden absolute top-4 left-4 z-10 bg-gray-800 p-2 rounded-lg text-white"
             >
-              <BsArrowLeft size={20} />
+              ←
             </button>
             <ChatWindow
               chat={selectedChat}
@@ -284,7 +196,9 @@ function Dashboard() {
                 WhatsApp Clone
               </h2>
               <p className="text-gray-400">
-                Select a chat or search for users to start messaging
+                {activeTab === "friends"
+                  ? "Select a friend to start chatting"
+                  : "Accept friend requests to start chatting"}
               </p>
             </div>
           </div>

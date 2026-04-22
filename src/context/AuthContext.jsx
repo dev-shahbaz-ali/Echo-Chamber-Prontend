@@ -8,6 +8,28 @@ export const useAuth = () => useContext(AuthContext);
 // API URL
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
+const readResponseError = async (response) => {
+  const contentType = response.headers.get("content-type") || "";
+
+  if (contentType.includes("application/json")) {
+    try {
+      const data = await response.json();
+      return (
+        data.error || data.message || `Request failed (${response.status})`
+      );
+    } catch {
+      return `Request failed (${response.status})`;
+    }
+  }
+
+  try {
+    const text = await response.text();
+    return text || `Request failed (${response.status})`;
+  } catch {
+    return `Request failed (${response.status})`;
+  }
+};
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -28,8 +50,7 @@ export const AuthProvider = ({ children }) => {
     });
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || "Request failed");
+      throw new Error(await readResponseError(response));
     }
 
     return response.json();
@@ -56,7 +77,7 @@ export const AuthProvider = ({ children }) => {
 
       if (response.ok) {
         const userData = await response.json();
-        setUser(userData);
+        setUser(userData.user || userData);
         setIsAuthenticated(true);
       } else {
         localStorage.removeItem("token");
@@ -82,11 +103,11 @@ export const AuthProvider = ({ children }) => {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "Login failed");
+        throw new Error(data.error || data.message || "Login failed");
       }
 
       localStorage.setItem("token", data.token);
-      setUser(data.user);
+      setUser(data.user || data);
       setIsAuthenticated(true);
       toast.success("Login successful!");
       return { success: true };
@@ -110,11 +131,11 @@ export const AuthProvider = ({ children }) => {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "Registration failed");
+        throw new Error(data.error || data.message || "Registration failed");
       }
 
       localStorage.setItem("token", data.token);
-      setUser(data.user);
+      setUser(data.user || data);
       setIsAuthenticated(true);
       toast.success("Registration successful!");
       return { success: true };
