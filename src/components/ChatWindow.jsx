@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useCallback,
+} from "react";
 import {
   BsSend,
   BsEmojiSmile,
@@ -18,8 +24,12 @@ function ChatWindow({ chat, currentUser, onSendMessage, onTyping, ws }) {
   const [playingVoice, setPlayingVoice] = useState(null);
 
   const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const audioRef = useRef(null);
+  const shouldStickToBottomRef = useRef(true);
+  const pendingPrependRef = useRef(false);
+  const previousScrollHeightRef = useRef(0);
 
   const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
   const currentUserId = currentUser?._id || currentUser?.id;
@@ -39,6 +49,8 @@ function ChatWindow({ chat, currentUser, onSendMessage, onTyping, ws }) {
       const incomingChatId = incomingMessage.chatId;
       const incomingText = incomingMessage.message || "";
       const incomingType = incomingMessage.messageType || "text";
+      const incomingVoiceUrl = incomingMessage.voiceUrl || "";
+      const incomingVoiceDuration = incomingMessage.voiceDuration ?? null;
       const incomingCreatedAt = incomingMessage.createdAt
         ? new Date(incomingMessage.createdAt).getTime()
         : null;
@@ -51,6 +63,8 @@ function ChatWindow({ chat, currentUser, onSendMessage, onTyping, ws }) {
         const msgChatId = msg.chatId;
         const msgText = msg.message || "";
         const msgType = msg.messageType || "text";
+        const msgVoiceUrl = msg.voiceUrl || "";
+        const msgVoiceDuration = msg.voiceDuration ?? null;
         const msgCreatedAt = msg.createdAt
           ? new Date(msg.createdAt).getTime()
           : null;
@@ -59,7 +73,9 @@ function ChatWindow({ chat, currentUser, onSendMessage, onTyping, ws }) {
           msgSenderId === incomingSenderId &&
           msgChatId === incomingChatId &&
           msgText === incomingText &&
-          msgType === incomingType;
+          msgType === incomingType &&
+          msgVoiceUrl === incomingVoiceUrl &&
+          msgVoiceDuration === incomingVoiceDuration;
 
         if (!sameCoreData) return false;
 
@@ -86,10 +102,6 @@ function ChatWindow({ chat, currentUser, onSendMessage, onTyping, ws }) {
   }, [chat, page]);
 
   useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  useEffect(() => {
     if (ws) {
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
@@ -112,12 +124,29 @@ function ChatWindow({ chat, currentUser, onSendMessage, onTyping, ws }) {
   }, [ws, chat, upsertMessage]);
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    });
+  };
+
+  const isNearBottom = (element) => {
+    if (!element) return true;
+
+    const distance =
+      element.scrollHeight - element.scrollTop - element.clientHeight;
+
+    return distance < 140;
   };
 
   const fetchMessages = async () => {
     try {
       setLoading(true);
+      if (page > 1 && messagesContainerRef.current) {
+        previousScrollHeightRef.current =
+          messagesContainerRef.current.scrollHeight;
+        pendingPrependRef.current = true;
+      }
+
       const token = localStorage.getItem("token");
       const response = await fetch(
         `${API_URL}/chats/${chat._id}/messages?page=${page}&limit=50`,
@@ -129,6 +158,9 @@ function ChatWindow({ chat, currentUser, onSendMessage, onTyping, ws }) {
 
       if (page === 1) {
         setMessages(data.messages);
+        // For the initial load of messages, always scroll to the bottom.
+        // This ensures the user sees the latest messages when opening a chat.
+        shouldStickToBottomRef.current = true;
       } else {
         setMessages((prev) => [...data.messages, ...prev]);
       }
@@ -140,11 +172,27 @@ function ChatWindow({ chat, currentUser, onSendMessage, onTyping, ws }) {
     }
   };
 
+  useLayoutEffect(() => {
+    if (!messagesContainerRef.current) return;
+
+    if (pendingPrependRef.current) {
+      const container = messagesContainerRef.current;
+      const newScrollHeight = container.scrollHeight;
+      container.scrollTop = newScrollHeight - previousScrollHeightRef.current;
+      pendingPrependRef.current = false;
+      return;
+    }
+
+    if (shouldStickToBottomRef.current) {
+      scrollToBottom();
+    }
+  }, [messages]);
+
   const markMessagesAsRead = async (messageIds = null) => {
     const unreadMessages = messages.filter(
       (m) =>
-        (m.receiverId?._id || m.receiverId || m.receiver_id) === currentUserId &&
-        !m.isRead,
+        (m.receiverId?._id || m.receiverId || m.receiver_id) ===
+          currentUserId && !m.isRead,
     );
     if (unreadMessages.length === 0) return;
 
@@ -185,7 +233,10 @@ function ChatWindow({ chat, currentUser, onSendMessage, onTyping, ws }) {
       isDelivered: true,
       messageType: "text",
     };
+    // Optimistically add the message to the UI
     setMessages((prev) => [...prev, tempMessage]);
+    shouldStickToBottomRef.current = true;
+    shouldStickToBottomRef.current = true; // User sent a message, always scroll to bottom
 
     const result = await onSendMessage(chat._id, messageText);
     if (result) {
@@ -194,25 +245,12 @@ function ChatWindow({ chat, currentUser, onSendMessage, onTyping, ws }) {
         _id: result._id || tempMessage._id,
       });
     }
+
+    scrollToBottom();
   };
 
   const handleVoiceSend = async (voiceUrl, duration) => {
-    // Optimistically add voice message
-    const tempMessage = {
-      _id: Date.now(),
-      message: "🎤 Voice message",
-      senderId: currentUserId,
-      receiverId: otherUser._id || otherUser.id,
-      chatId: chat._id,
-      createdAt: new Date().toISOString(),
-      isRead: false,
-      isDelivered: true,
-      messageType: "voice",
-      voiceUrl,
-      voiceDuration: duration,
-    };
-    setMessages((prev) => [...prev, tempMessage]);
-
+    shouldStickToBottomRef.current = true; // User sent a voice message, always scroll to bottom
     const result = await onSendMessage(chat._id, "", {
       messageType: "voice",
       voiceUrl,
@@ -222,12 +260,14 @@ function ChatWindow({ chat, currentUser, onSendMessage, onTyping, ws }) {
     if (result) {
       upsertMessage({
         ...result,
-        _id: result._id || tempMessage._id,
         messageType: "voice",
         voiceUrl,
         voiceDuration: duration,
       });
     }
+
+    shouldStickToBottomRef.current = true;
+    scrollToBottom();
   };
 
   const handleTyping = (e) => {
@@ -325,9 +365,13 @@ function ChatWindow({ chat, currentUser, onSendMessage, onTyping, ws }) {
 
       {/* Messages */}
       <div
+        ref={messagesContainerRef}
         className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-900"
         onScroll={(e) => {
-          if (e.target.scrollTop === 0) {
+          const container = e.currentTarget;
+          shouldStickToBottomRef.current = isNearBottom(container);
+
+          if (container.scrollTop <= 40 && hasMore && !loading) {
             loadMoreMessages();
           }
         }}
