@@ -1,9 +1,15 @@
+// Dashboard.jsx - Updated
 import React, { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../context/AuthContext";
 import FriendsList from "../components/FriendsList";
 import FriendRequests from "../components/FriendRequests";
 import ChatWindow from "../components/ChatWindow";
-import { BsWhatsapp, BsPeople, BsPersonAdd, BsBell } from "react-icons/bs";
+import {
+  BsWhatsapp,
+  BsPeople,
+  BsPersonAdd,
+  BsThreeDotsVertical,
+} from "react-icons/bs";
 
 function Dashboard() {
   const { user, logout } = useAuth();
@@ -12,6 +18,7 @@ function Dashboard() {
   const [showSidebar, setShowSidebar] = useState(true);
   const [ws, setWs] = useState(null);
   const [notificationCount, setNotificationCount] = useState(0);
+  const [showUserMenu, setShowUserMenu] = useState(false);
 
   const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
@@ -23,12 +30,7 @@ function Dashboard() {
     const websocket = new WebSocket("ws://localhost:5000");
 
     websocket.onopen = () => {
-      websocket.send(
-        JSON.stringify({
-          type: "auth",
-          token: token,
-        }),
-      );
+      websocket.send(JSON.stringify({ type: "auth", token }));
     };
 
     websocket.onmessage = (event) => {
@@ -39,26 +41,26 @@ function Dashboard() {
       }
 
       if (data.type === "friend_request_accepted") {
+        // Refresh friends list
         window.location.reload();
-      }
-
-      if (data.type === "friend_status_change") {
-        // Update friend status in UI
-        console.log("Friend status changed:", data);
       }
     };
 
     setWs(websocket);
 
-    return () => {
-      websocket.close();
-    };
+    return () => websocket.close();
   }, []);
 
-  const handleRequestAction = () => {
-    setNotificationCount(0);
-    setActiveTab("friends");
-  };
+  // Handle responsive sidebar
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth >= 768) {
+        setShowSidebar(true);
+      }
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   const sendMessage = async (chatId, message, extraData = {}) => {
     try {
@@ -81,70 +83,79 @@ function Dashboard() {
     return null;
   };
 
-  const handleTyping = (chatId, isTyping) => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(
-        JSON.stringify({
-          type: "typing",
-          chatId,
-          isTyping,
-        }),
-      );
+  const handleSelectChat = (chat) => {
+    setSelectedChat(chat);
+    if (window.innerWidth < 768) {
+      setShowSidebar(false);
     }
   };
 
+  const handleBackToList = () => {
+    setSelectedChat(null);
+    setShowSidebar(true);
+  };
+
   return (
-    <div className="h-screen flex bg-gray-900">
+    <div className="h-screen flex bg-[#efeae2]">
       {/* Sidebar */}
       <div
-        className={`${showSidebar ? "w-full md:w-96" : "hidden md:block md:w-96"} bg-gray-800 border-r border-gray-700 flex flex-col`}
+        className={`${showSidebar ? "w-full md:w-96" : "hidden md:block md:w-96"} bg-[#f0f2f5] border-r border-gray-200 flex flex-col`}
       >
-        {/* User Info */}
-        <div className="bg-gray-700 p-4 flex items-center justify-between">
+        {/* User Info Header */}
+        <div className="bg-[#f0f2f5] p-4 flex items-center justify-between border-b border-gray-200">
           <div className="flex items-center space-x-3">
             <img
-              src={user?.avatar}
+              src={user?.avatar || "https://via.placeholder.com/40"}
               alt={user?.username}
               className="w-10 h-10 rounded-full object-cover"
             />
-            <div>
-              <h2 className="font-semibold text-white">{user?.username}</h2>
-              <p className="text-xs text-gray-400">{user?.status}</p>
-            </div>
+            <h2 className="font-semibold text-gray-800">{user?.username}</h2>
           </div>
-          <button
-            onClick={logout}
-            className="text-gray-400 hover:text-white transition-colors"
-          >
-            Logout
-          </button>
+          <div className="relative">
+            <button
+              onClick={() => setShowUserMenu(!showUserMenu)}
+              className="text-gray-600 hover:text-gray-800"
+            >
+              <BsThreeDotsVertical size={20} />
+            </button>
+            {showUserMenu && (
+              <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 z-10">
+                <button
+                  onClick={logout}
+                  className="w-full text-left px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
+                >
+                  Logout
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-gray-700">
+        <div className="flex border-b border-gray-200">
           <button
             onClick={() => setActiveTab("friends")}
             className={`flex-1 py-3 text-center transition-colors ${
               activeTab === "friends"
-                ? "text-green-500 border-b-2 border-green-500"
-                : "text-gray-400 hover:text-white"
+                ? "text-green-600 border-b-2 border-green-600 font-medium"
+                : "text-gray-500 hover:text-gray-700"
             }`}
           >
             <BsPeople className="inline mr-2" />
-            Friends
+            Chats
           </button>
           <button
             onClick={() => setActiveTab("requests")}
             className={`flex-1 py-3 text-center transition-colors relative ${
               activeTab === "requests"
-                ? "text-green-500 border-b-2 border-green-500"
-                : "text-gray-400 hover:text-white"
+                ? "text-green-600 border-b-2 border-green-600 font-medium"
+                : "text-gray-500 hover:text-gray-700"
             }`}
           >
             <BsPersonAdd className="inline mr-2" />
             Requests
             {notificationCount > 0 && (
-              <span className="absolute top-1 right-4 bg-red-500 text-white text-xs rounded-full px-2 py-0.5">
+              <span className="absolute top-1 right-8 bg-red-500 text-white text-xs rounded-full px-1.5 py-0.5 min-w-[18px]">
                 {notificationCount}
               </span>
             )}
@@ -155,18 +166,16 @@ function Dashboard() {
         <div className="flex-1 overflow-y-auto">
           {activeTab === "friends" ? (
             <FriendsList
-              onSelectChat={(chat) => {
-                setSelectedChat(chat);
-                if (window.innerWidth < 768) {
-                  setShowSidebar(false);
-                }
-              }}
+              onSelectChat={handleSelectChat}
               selectedChatId={selectedChat?._id}
               currentUser={user}
             />
           ) : (
             <FriendRequests
-              onRequestAction={handleRequestAction}
+              onRequestAction={() => {
+                setNotificationCount(0);
+                setActiveTab("friends");
+              }}
               currentUser={user}
             />
           )}
@@ -174,39 +183,29 @@ function Dashboard() {
       </div>
 
       {/* Chat Area */}
-      <div className="flex-1 flex flex-col">
-        {selectedChat ? (
-          <>
-            <button
-              onClick={() => setShowSidebar(true)}
-              className="md:hidden absolute top-4 left-4 z-10 bg-gray-800 p-2 rounded-lg text-white"
-            >
-              ←
-            </button>
-            <ChatWindow
-              chat={selectedChat}
-              currentUser={user}
-              onSendMessage={sendMessage}
-              onTyping={handleTyping}
-              ws={ws}
-            />
-          </>
-        ) : (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center">
-              <BsWhatsapp className="text-6xl text-green-500 mx-auto mb-4" />
-              <h2 className="text-2xl font-semibold text-white mb-2">
-                WhatsApp Clone
-              </h2>
-              <p className="text-gray-400">
-                {activeTab === "friends"
-                  ? "Select a friend to start chatting"
-                  : "Accept friend requests to start chatting"}
-              </p>
-            </div>
+      {selectedChat ? (
+        <ChatWindow
+          chat={selectedChat}
+          currentUser={user}
+          onSendMessage={sendMessage}
+          ws={ws}
+          onBack={handleBackToList}
+        />
+      ) : (
+        <div className="flex-1 flex items-center justify-center bg-[#efeae2]">
+          <div className="text-center">
+            <BsWhatsapp className="text-6xl text-green-600 mx-auto mb-4" />
+            <h2 className="text-2xl font-semibold text-gray-700 mb-2">
+              WhatsApp Web
+            </h2>
+            <p className="text-gray-500">
+              {activeTab === "friends"
+                ? "Select a chat to start messaging"
+                : "Accept friend requests to start chatting"}
+            </p>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

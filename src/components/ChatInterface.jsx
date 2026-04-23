@@ -155,9 +155,7 @@ function ChatInterface({ user, onLogout }) {
 
   const updateMessageStatus = (messageId, status) => {
     setMessages((prev) =>
-      prev.map((msg) =>
-        msg.id === messageId ? { ...msg, status } : msg,
-      ),
+      prev.map((msg) => (msg.id === messageId ? { ...msg, status } : msg)),
     );
   };
 
@@ -415,7 +413,9 @@ function ChatInterface({ user, onLogout }) {
         </div>
       </div>
 
-      <div className={`relative z-10 flex flex-1 flex-col ${!showSidebar ? "block" : ""}`}>
+      <div
+        className={`relative z-10 flex flex-1 flex-col ${!showSidebar ? "block" : ""}`}
+      >
         {selectedChat ? (
           <>
             <div className="flex items-center justify-between border-b border-black/5 bg-[#f0f2f5]/92 px-4 py-3 backdrop-blur-xl">
@@ -462,7 +462,9 @@ function ChatInterface({ user, onLogout }) {
                         : "rounded-tl-none bg-white text-slate-900 shadow-sm"
                     }`}
                   >
-                    <p className="min-w-0 break-words text-base">{msg.message}</p>
+                    <p className="min-w-0 break-words text-base">
+                      {msg.message}
+                    </p>
                     <div className="mt-1 text-right text-xs text-slate-500">
                       {formatTime(msg.created_at)}
                       {msg.sender_id === user.id && (
