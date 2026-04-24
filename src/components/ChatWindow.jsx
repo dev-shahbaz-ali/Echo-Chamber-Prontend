@@ -56,14 +56,12 @@ function ChatWindow({
   const otherUser =
     chat?.otherParticipant ||
     chat?.participants?.find((p) => (p._id || p.id) !== currentUserId);
+  const isSameChatId = useCallback((a, b) => String(a) === String(b), []);
 
-  const isMessageForChat = useCallback(
-    (message, chatId) => {
-      if (!message?.chatId) return false;
-      return String(message.chatId) === String(chatId);
-    },
-    [],
-  );
+  const isMessageForChat = useCallback((message, chatId) => {
+    if (!message?.chatId) return false;
+    return String(message.chatId) === String(chatId);
+  }, []);
 
   const getMessageKey = (message) =>
     message?._id || message?.clientMessageId || message?.tempId;
@@ -108,9 +106,57 @@ function ChatWindow({
     });
 
     return next.sort(
-      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      (a, b) =>
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
     );
   };
+
+  const waitForWebSocketOpen = useCallback(
+    (timeoutMs = 3000) =>
+      new Promise((resolve) => {
+        if (!ws) {
+          resolve(false);
+          return;
+        }
+
+        if (ws.readyState === WebSocket.OPEN) {
+          resolve(true);
+          return;
+        }
+
+        const startedAt = Date.now();
+        const timer = setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            clearInterval(timer);
+            resolve(true);
+            return;
+          }
+
+          if (Date.now() - startedAt >= timeoutMs) {
+            clearInterval(timer);
+            resolve(false);
+          }
+        }, 100);
+      }),
+    [ws],
+  );
+
+  const sendRealtimeMessage = useCallback(
+    async (payload) => {
+      const isOpen = await waitForWebSocketOpen();
+      if (!isOpen) return false;
+
+      ws.send(
+        JSON.stringify({
+          ...payload,
+          chatId: chat._id,
+        }),
+      );
+
+      return true;
+    },
+    [ws, chat?._id, waitForWebSocketOpen],
+  );
 
   // Check if user is near bottom
   const isNearBottom = useCallback(() => {
@@ -302,7 +348,10 @@ function ChatWindow({
     const handleMessage = (event) => {
       const data = JSON.parse(event.data);
 
-      if (data.type === "receive_message" && data.chatId === chat?._id) {
+      if (
+        data.type === "receive_message" &&
+        isSameChatId(data.chatId, chat?._id)
+      ) {
         setMessages((prev) => {
           const newMessages = mergeMessages(prev, [data.message]);
           if (shouldAutoScrollRef.current) {
@@ -314,7 +363,7 @@ function ChatWindow({
         markMessagesAsRead([data.message._id]);
       }
 
-      if (data.type === "user_typing" && data.chatId === chat?._id) {
+      if (data.type === "user_typing" && isSameChatId(data.chatId, chat?._id)) {
         setOtherUserTyping(data.isTyping);
         setTimeout(() => setOtherUserTyping(false), 2000);
       }
@@ -325,7 +374,10 @@ function ChatWindow({
         });
       }
 
-      if (data.type === "message_deleted" && data.chatId === chat?._id) {
+      if (
+        data.type === "message_deleted" &&
+        isSameChatId(data.chatId, chat?._id)
+      ) {
         if (data.message) {
           setMessages((prev) =>
             prev.map((msg) =>
@@ -337,7 +389,10 @@ function ChatWindow({
         }
       }
 
-      if (data.type === "delete_message_error" && data.chatId === chat?._id) {
+      if (
+        data.type === "delete_message_error" &&
+        isSameChatId(data.chatId, chat?._id)
+      ) {
         toast.error(data.error || "Failed to delete message");
       }
     };
@@ -484,24 +539,61 @@ function ChatWindow({
   const handleVoiceSend = async (voiceUrl, voiceDuration) => {
     try {
       const clientMessageId =
-        (window.crypto && window.crypto.randomUUID
+        window.crypto && window.crypto.randomUUID
           ? window.crypto.randomUUID()
-          : `voice-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-      const result = await onSendMessage(chat._id, "", {
+          : `voice-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+      const tempMessage = {
+        _id: clientMessageId,
+        tempId: clientMessageId,
+        clientMessageId,
+        message: "",
+        senderId: currentUserId,
+        receiverId: otherUser._id || otherUser.id,
+        chatId: chat._id,
+        createdAt: new Date().toISOString(),
+        isRead: false,
+        isDelivered: true,
+        messageType: "voice",
+        voiceUrl,
+        voiceDuration,
+        status: "sending",
+      };
+
+      setMessages((prev) => mergeMessages(prev, [tempMessage]));
+      shouldAutoScrollRef.current = true;
+      scrollToBottom();
+
+      const sentViaSocket = await sendRealtimeMessage({
+        type: "new_message",
         messageType: "voice",
         voiceUrl,
         voiceDuration,
         clientMessageId,
       });
 
-      if (result) {
-        setMessages((prev) =>
-          mergeMessages(prev, [{ ...result, status: "sent" }]),
-        );
-        shouldAutoScrollRef.current = true;
-        scrollToBottom();
-      } else {
-        toast.error("Failed to send voice message");
+      if (!sentViaSocket) {
+        const result = await onSendMessage(chat._id, "", {
+          messageType: "voice",
+          voiceUrl,
+          voiceDuration,
+          clientMessageId,
+        });
+
+        if (result) {
+          setMessages((prev) =>
+            mergeMessages(prev, [{ ...result, status: "sent" }]),
+          );
+        } else {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.clientMessageId === clientMessageId
+                ? { ...msg, status: "failed" }
+                : msg,
+            ),
+          );
+          toast.error("Failed to send voice message");
+        }
       }
     } catch (error) {
       console.error("Error sending voice message:", error);
@@ -568,7 +660,7 @@ function ChatWindow({
     );
   };
 
-  // Send message with API call
+  // Send message
   const handleSendMessage = async () => {
     if (!inputMessage.trim()) return;
 
@@ -656,33 +748,44 @@ function ChatWindow({
     shouldAutoScrollRef.current = true;
     scrollToBottom();
 
-    // Send to API
     try {
-      const token = localStorage.getItem("token");
-      const response = await fetch(`${API_URL}/chats/${chat._id}/messages`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-auth-token": token,
-        },
-        body: JSON.stringify({
-          message: messageText,
-          replyTo: currentReplyToId,
-          clientMessageId,
-        }),
+      const sentViaSocket = await sendRealtimeMessage({
+        type: "new_message",
+        message: messageText,
+        messageType: "text",
+        replyTo: currentReplyToId,
+        clientMessageId,
       });
 
-      if (response.ok) {
-        const result = await response.json();
-        setMessages((prev) =>
-          mergeMessages(prev, [{ ...result, status: "sent" }]),
-        );
+      if (!sentViaSocket) {
+        const result = await onSendMessage(chat._id, messageText, {
+          replyTo: currentReplyToId,
+          clientMessageId,
+          messageType: "text",
+        });
+
+        if (result) {
+          setMessages((prev) =>
+            mergeMessages(prev, [{ ...result, status: "sent" }]),
+          );
+        } else {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.clientMessageId === clientMessageId
+                ? { ...msg, status: "failed" }
+                : msg,
+            ),
+          );
+          toast.error("Failed to send message");
+        }
       }
     } catch (error) {
       console.error("Error sending message:", error);
       setMessages((prev) =>
         prev.map((msg) =>
-          msg.tempId === tempId ? { ...msg, status: "failed" } : msg,
+          msg.clientMessageId === clientMessageId
+            ? { ...msg, status: "failed" }
+            : msg,
         ),
       );
     }

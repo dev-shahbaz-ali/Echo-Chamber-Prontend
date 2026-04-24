@@ -115,13 +115,15 @@ function VoiceRecorder({ onVoiceSend, disabled }) {
 
       const data = await uploadResponse.json();
 
-      if (data.success) {
+      if (uploadResponse.ok && data.success) {
         onVoiceSend(data.voiceUrl, data.duration);
         cancelRecording();
+      } else {
+        throw new Error(data.error || "Voice upload failed");
       }
     } catch (error) {
       console.error("Error sending voice message:", error);
-      alert("Failed to send voice message");
+      alert(error.message || "Failed to send voice message");
     } finally {
       setUploading(false);
     }

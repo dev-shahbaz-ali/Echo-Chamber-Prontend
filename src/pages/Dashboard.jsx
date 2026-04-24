@@ -28,8 +28,11 @@ function Dashboard() {
     const token = localStorage.getItem("token");
     if (!token) return;
 
-    let websocket;
-    const connectTimer = setTimeout(() => {
+    let websocket = null;
+    let reconnectTimer = null;
+    let isClosedByCleanup = false;
+
+    const connect = () => {
       websocket = new WebSocket("ws://localhost:5000");
 
       websocket.onopen = () => {
@@ -44,16 +47,28 @@ function Dashboard() {
         }
 
         if (data.type === "friend_request_accepted") {
-          // Refresh friends list
           window.location.reload();
         }
       };
 
+      websocket.onerror = () => {
+        websocket?.close();
+      };
+
+      websocket.onclose = () => {
+        if (!isClosedByCleanup) {
+          reconnectTimer = setTimeout(connect, 1000);
+        }
+      };
+
       setWs(websocket);
-    }, 0);
+    };
+
+    connect();
 
     return () => {
-      clearTimeout(connectTimer);
+      isClosedByCleanup = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       if (websocket && websocket.readyState === WebSocket.OPEN) {
         websocket.close();
       }
