@@ -49,12 +49,25 @@ function FriendRequests({ onRequestAction, currentUser }) {
         },
       );
 
-      const data = await response.json();
+      let data = {};
+      try {
+        data = await response.json();
+      } catch {
+        data = {};
+      }
 
       if (response.ok) {
         toast.success("Friend request accepted!");
         fetchRequests();
         onRequestAction?.();
+      } else {
+        toast.error(data.error || data.message || "Failed to accept request");
+        console.error("Accept request failed:", {
+          requestId,
+          status: response.status,
+          statusText: response.statusText,
+          data,
+        });
       }
     } catch (error) {
       console.error("Error accepting request:", error);
@@ -76,6 +89,14 @@ function FriendRequests({ onRequestAction, currentUser }) {
       if (response.ok) {
         toast.success("Friend request rejected");
         fetchRequests();
+      } else {
+        let data = {};
+        try {
+          data = await response.json();
+        } catch {
+          data = {};
+        }
+        toast.error(data.error || data.message || "Failed to reject request");
       }
     } catch (error) {
       console.error("Error rejecting request:", error);

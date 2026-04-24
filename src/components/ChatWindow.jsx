@@ -57,6 +57,61 @@ function ChatWindow({
     chat?.otherParticipant ||
     chat?.participants?.find((p) => (p._id || p.id) !== currentUserId);
 
+  const isMessageForChat = useCallback(
+    (message, chatId) => {
+      if (!message?.chatId) return false;
+      return String(message.chatId) === String(chatId);
+    },
+    [],
+  );
+
+  const getMessageKey = (message) =>
+    message?._id || message?.clientMessageId || message?.tempId;
+
+  const mergeMessages = (prevMessages, incomingMessages) => {
+    const next = [...prevMessages];
+
+    incomingMessages.forEach((incoming) => {
+      if (!incoming) return;
+
+      const incomingClientId = incoming.clientMessageId || null;
+      const incomingId = incoming._id || null;
+
+      const existingIndex = next.findIndex((msg) => {
+        if (!msg) return false;
+
+        if (incomingClientId && msg.clientMessageId === incomingClientId) {
+          return true;
+        }
+
+        if (incomingId && msg._id === incomingId) {
+          return true;
+        }
+
+        return false;
+      });
+
+      if (existingIndex !== -1) {
+        next[existingIndex] = {
+          ...next[existingIndex],
+          ...incoming,
+        };
+        return;
+      }
+
+      const key = getMessageKey(incoming);
+      if (key && next.some((msg) => getMessageKey(msg) === key)) {
+        return;
+      }
+
+      next.push(incoming);
+    });
+
+    return next.sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    );
+  };
+
   // Check if user is near bottom
   const isNearBottom = useCallback(() => {
     const container = messagesContainerRef.current;
@@ -83,10 +138,13 @@ function ChatWindow({
     });
   }, []);
 
-  const focusMessageById = useCallback((messageId) => {
-    setActiveSearchMessageId(messageId);
-    scrollToMessage(messageId);
-  }, [scrollToMessage]);
+  const focusMessageById = useCallback(
+    (messageId) => {
+      setActiveSearchMessageId(messageId);
+      scrollToMessage(messageId);
+    },
+    [scrollToMessage],
+  );
 
   const loadMessageContext = useCallback(
     async (messageId) => {
@@ -126,9 +184,16 @@ function ChatWindow({
     loadMessageContext(result._id);
   };
 
-  // Fetch messages
   const fetchMessages = useCallback(
     async (pageNum = 1, append = false) => {
+      // Safety check
+      if (!chat?._id) {
+        console.error("Cannot fetch messages: chat._id is undefined");
+        setMessages([]); // Set empty messages array
+        setLoading(false);
+        return;
+      }
+
       try {
         setLoading(true);
 
@@ -142,10 +207,24 @@ function ChatWindow({
           `${API_URL}/chats/${chat._id}/messages?page=${pageNum}&limit=50`,
           { headers: { "x-auth-token": token } },
         );
+
+        // Handle 404 specially
+        if (response.status === 404) {
+          console.warn(`Chat ${chat._id} not found or has no messages`);
+          setMessages([]);
+          setHasMore(false);
+          setLoading(false);
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
         const data = await response.json();
 
         if (append) {
-          setMessages((prev) => [...data.messages, ...prev]);
+          setMessages((prev) => mergeMessages(prev, data.messages || []));
           setTimeout(() => {
             if (messagesContainerRef.current) {
               const newScrollHeight = messagesContainerRef.current.scrollHeight;
@@ -154,7 +233,12 @@ function ChatWindow({
             }
           }, 0);
         } else {
-          setMessages(data.messages);
+          setMessages((prev) =>
+            mergeMessages(
+              prev.filter((message) => isMessageForChat(message, chat._id)),
+              data.messages || [],
+            ),
+          );
           if (initialLoad) {
             setTimeout(() => scrollToBottom("auto"), 100);
             setInitialLoad(false);
@@ -164,11 +248,12 @@ function ChatWindow({
         setHasMore(data.currentPage < data.totalPages);
       } catch (error) {
         console.error("Error fetching messages:", error);
+        setMessages([]); // Set empty array on error
       } finally {
         setLoading(false);
       }
     },
-    [chat, initialLoad, scrollToBottom],
+    [chat?._id, initialLoad, scrollToBottom, API_URL],
   );
 
   // Load older messages when scrolling up
@@ -219,10 +304,7 @@ function ChatWindow({
 
       if (data.type === "receive_message" && data.chatId === chat?._id) {
         setMessages((prev) => {
-          const exists = prev.some((m) => m._id === data.message._id);
-          if (exists) return prev;
-
-          const newMessages = [...prev, data.message];
+          const newMessages = mergeMessages(prev, [data.message]);
           if (shouldAutoScrollRef.current) {
             setTimeout(() => scrollToBottom(), 50);
           }
@@ -239,16 +321,7 @@ function ChatWindow({
 
       if (data.type === "message_sent" || data.type === "message_edited") {
         setMessages((prev) => {
-          const index = prev.findIndex(
-            (m) =>
-              m._id === data.message._id || m.tempId === data.message.tempId,
-          );
-          if (index !== -1) {
-            const updated = [...prev];
-            updated[index] = data.message;
-            return updated;
-          }
-          return [...prev, data.message];
+          return mergeMessages(prev, [data.message]);
         });
       }
 
@@ -410,14 +483,21 @@ function ChatWindow({
 
   const handleVoiceSend = async (voiceUrl, voiceDuration) => {
     try {
+      const clientMessageId =
+        (window.crypto && window.crypto.randomUUID
+          ? window.crypto.randomUUID()
+          : `voice-${Date.now()}-${Math.random().toString(16).slice(2)}`);
       const result = await onSendMessage(chat._id, "", {
         messageType: "voice",
         voiceUrl,
         voiceDuration,
+        clientMessageId,
       });
 
       if (result) {
-        setMessages((prev) => [...prev, { ...result, status: "sent" }]);
+        setMessages((prev) =>
+          mergeMessages(prev, [{ ...result, status: "sent" }]),
+        );
         shouldAutoScrollRef.current = true;
         scrollToBottom();
       } else {
@@ -493,6 +573,10 @@ function ChatWindow({
     if (!inputMessage.trim()) return;
 
     const tempId = Date.now();
+    const clientMessageId =
+      window.crypto && window.crypto.randomUUID
+        ? window.crypto.randomUUID()
+        : `msg-${tempId}-${Math.random().toString(16).slice(2)}`;
     const messageText = inputMessage;
     const isEdit = !!editingMessage;
     const currentEditingId = editingMessage?._id;
@@ -555,6 +639,7 @@ function ChatWindow({
     const tempMessage = {
       _id: tempId,
       tempId,
+      clientMessageId,
       message: messageText,
       senderId: currentUserId,
       receiverId: otherUser._id || otherUser.id,
@@ -583,15 +668,14 @@ function ChatWindow({
         body: JSON.stringify({
           message: messageText,
           replyTo: currentReplyToId,
+          clientMessageId,
         }),
       });
 
       if (response.ok) {
         const result = await response.json();
         setMessages((prev) =>
-          prev.map((msg) =>
-            msg.tempId === tempId ? { ...result, status: "sent" } : msg,
-          ),
+          mergeMessages(prev, [{ ...result, status: "sent" }]),
         );
       }
     } catch (error) {
@@ -1096,7 +1180,7 @@ function ChatWindow({
                 currentUserId && (
                 <button
                   onClick={() => performDelete(true)}
-                  className="w-full py-2 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition-colors"
+                  className="w-full py-2 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition-colors cursor-pointer"
                 >
                   Delete for everyone
                 </button>
@@ -1119,10 +1203,6 @@ function ChatWindow({
               <h4 className="mb-2 text-lg font-semibold text-gray-800">
                 Clear chat?
               </h4>
-              <p className="text-sm text-gray-500">
-                This will remove the conversation from your view only. The
-                other person will still see their copy.
-              </p>
             </div>
             <div className="bg-gray-50 px-6 py-4 space-y-2 flex flex-col">
               <button

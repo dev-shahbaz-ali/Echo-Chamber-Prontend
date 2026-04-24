@@ -1,3 +1,4 @@
+// FriendsList.jsx - Fixed version
 import React, { useState, useEffect } from "react";
 import { BsChat, BsThreeDotsVertical, BsPersonAdd } from "react-icons/bs";
 import toast from "react-hot-toast";
@@ -6,7 +7,7 @@ function FriendsList({
   onSelectChat,
   selectedChatId,
   currentUser,
-  refreshKey = 0,
+  refreshKey,
 }) {
   const [friends, setFriends] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -14,6 +15,15 @@ function FriendsList({
   const [suggestions, setSuggestions] = useState([]);
 
   const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+
+  const getServerChatId = (friend) =>
+    friend.chatId?._id ||
+    friend.chatId ||
+    friend.conversationId?._id ||
+    friend.conversationId ||
+    friend.chat?._id ||
+    friend.chat ||
+    null;
 
   useEffect(() => {
     fetchFriends();
@@ -74,12 +84,55 @@ function FriendsList({
     }
   };
 
-  const startChat = (friend) => {
-    onSelectChat({
-      _id: friend.chatId,
+  const startChat = async (friend) => {
+    let chatId = getServerChatId(friend);
+
+    if (!chatId) {
+      try {
+        const token = localStorage.getItem("token");
+        const response = await fetch(`${API_URL}/chats`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-auth-token": token,
+          },
+          body: JSON.stringify({ otherUserId: friend._id || friend.id }),
+        });
+
+        const data = await response.json();
+        chatId = data?._id;
+
+        if (!response.ok || !chatId) {
+          toast.error(data.error || data.message || "Cannot open chat yet.");
+          console.error("Failed to create or load chat:", {
+            friend,
+            status: response.status,
+            data,
+          });
+          return;
+        }
+      } catch (error) {
+        console.error("Error creating chat:", error);
+        toast.error("Cannot open chat yet. Please try again.");
+        return;
+      }
+    }
+
+    const chatObject = {
+      _id: chatId,
       participants: [currentUser, friend],
-      otherParticipant: friend,
-    });
+      otherParticipant: {
+        id: friend._id || friend.id,
+        _id: friend._id || friend.id,
+        username: friend.username,
+        avatar: friend.avatar,
+        isOnline: friend.isOnline || false,
+        status: friend.status || "Hey there! I am using WhatsApp",
+      },
+    };
+
+    console.log("Starting chat with:", chatObject);
+    onSelectChat(chatObject);
   };
 
   if (loading) {
@@ -152,10 +205,12 @@ function FriendsList({
       ) : (
         <div className="space-y-1">
           {friends.map((friend) => (
-            <div
-              key={friend._id}
-              className={`flex items-center space-x-3 p-3 hover:bg-gray-700 cursor-pointer transition-colors ${
-                selectedChatId === friend.chatId ? "bg-gray-700" : ""
+              <div
+                key={friend._id}
+                className={`flex items-center space-x-3 p-3 hover:bg-gray-700 cursor-pointer transition-colors ${
+                selectedChatId === getServerChatId(friend)
+                  ? "bg-gray-700"
+                  : ""
               }`}
               onClick={() => startChat(friend)}
             >
