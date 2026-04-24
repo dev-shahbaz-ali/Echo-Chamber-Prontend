@@ -27,28 +27,36 @@ function Dashboard() {
     const token = localStorage.getItem("token");
     if (!token) return;
 
-    const websocket = new WebSocket("ws://localhost:5000");
+    let websocket;
+    const connectTimer = setTimeout(() => {
+      websocket = new WebSocket("ws://localhost:5000");
 
-    websocket.onopen = () => {
-      websocket.send(JSON.stringify({ type: "auth", token }));
-    };
+      websocket.onopen = () => {
+        websocket.send(JSON.stringify({ type: "auth", token }));
+      };
 
-    websocket.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+      websocket.onmessage = (event) => {
+        const data = JSON.parse(event.data);
 
-      if (data.type === "friend_request_received") {
-        setNotificationCount((prev) => prev + 1);
+        if (data.type === "friend_request_received") {
+          setNotificationCount((prev) => prev + 1);
+        }
+
+        if (data.type === "friend_request_accepted") {
+          // Refresh friends list
+          window.location.reload();
+        }
+      };
+
+      setWs(websocket);
+    }, 0);
+
+    return () => {
+      clearTimeout(connectTimer);
+      if (websocket && websocket.readyState === WebSocket.OPEN) {
+        websocket.close();
       }
-
-      if (data.type === "friend_request_accepted") {
-        // Refresh friends list
-        window.location.reload();
-      }
     };
-
-    setWs(websocket);
-
-    return () => websocket.close();
   }, []);
 
   // Handle responsive sidebar
@@ -196,7 +204,7 @@ function Dashboard() {
           <div className="text-center">
             <BsWhatsapp className="text-6xl text-green-600 mx-auto mb-4" />
             <h2 className="text-2xl font-semibold text-gray-700 mb-2">
-              WhatsApp Web
+              Echo Chamber
             </h2>
             <p className="text-gray-500">
               {activeTab === "friends"

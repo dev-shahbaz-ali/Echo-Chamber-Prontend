@@ -76,7 +76,7 @@ function ChatInterface({ user, onLogout }) {
   );
 
   useEffect(() => {
-    const token = localStorage.getItem("whatsapp_token");
+    const token = localStorage.getItem("echo_chamber_token");
     if (!token) return;
 
     const websocket = new WebSocket(`ws://localhost:8080`);
@@ -312,7 +312,7 @@ function ChatInterface({ user, onLogout }) {
             <div>
               <h2 className="font-semibold text-slate-900">{user.username}</h2>
               <p className="text-xs text-slate-500">
-                {user.status || "Hey there! I am using WhatsApp"}
+                {user.status || "Hey there! I am using Echo Chamber."}
               </p>
             </div>
           </div>
@@ -577,7 +577,7 @@ function ChatInterface({ user, onLogout }) {
             <div className="text-center">
               <BsWhatsapp className="mx-auto mb-4 text-6xl text-[#25d366]" />
               <h2 className="mb-2 text-2xl font-semibold text-slate-900">
-                WhatsApp Web
+                Echo Chamber
               </h2>
               <p className="text-slate-500">Select a chat to start messaging</p>
             </div>

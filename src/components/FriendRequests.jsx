@@ -19,7 +19,18 @@ function FriendRequests({ onRequestAction, currentUser }) {
         headers: { "x-auth-token": token },
       });
       const data = await response.json();
-      setRequests(data);
+
+      const received = Array.isArray(data.received)
+        ? data.received.filter((request) => request?.senderId?.username)
+        : [];
+      const sent = Array.isArray(data.sent)
+        ? data.sent.filter((request) => request?.receiverId?.username)
+        : [];
+
+      setRequests({
+        received,
+        sent,
+      });
     } catch (error) {
       console.error("Error fetching requests:", error);
     } finally {
