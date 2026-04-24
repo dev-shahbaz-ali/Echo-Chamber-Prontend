@@ -2,7 +2,12 @@ import React, { useState, useEffect } from "react";
 import { BsChat, BsThreeDotsVertical, BsPersonAdd } from "react-icons/bs";
 import toast from "react-hot-toast";
 
-function FriendsList({ onSelectChat, selectedChatId, currentUser }) {
+function FriendsList({
+  onSelectChat,
+  selectedChatId,
+  currentUser,
+  refreshKey = 0,
+}) {
   const [friends, setFriends] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -13,7 +18,7 @@ function FriendsList({ onSelectChat, selectedChatId, currentUser }) {
   useEffect(() => {
     fetchFriends();
     fetchSuggestions();
-  }, []);
+  }, [refreshKey]);
 
   const fetchFriends = async () => {
     try {

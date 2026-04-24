@@ -19,6 +19,7 @@ function Dashboard() {
   const [ws, setWs] = useState(null);
   const [notificationCount, setNotificationCount] = useState(0);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [friendsRefreshKey, setFriendsRefreshKey] = useState(0);
 
   const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
@@ -177,6 +178,7 @@ function Dashboard() {
               onSelectChat={handleSelectChat}
               selectedChatId={selectedChat?._id}
               currentUser={user}
+              refreshKey={friendsRefreshKey}
             />
           ) : (
             <FriendRequests
@@ -198,6 +200,7 @@ function Dashboard() {
           onSendMessage={sendMessage}
           ws={ws}
           onBack={handleBackToList}
+          onChatCleared={() => setFriendsRefreshKey((prev) => prev + 1)}
         />
       ) : (
         <div className="flex-1 flex items-center justify-center bg-[#efeae2]">

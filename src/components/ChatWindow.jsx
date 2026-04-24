@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import toast from "react-hot-toast";
 import {
+  BsSearch,
   BsSend,
   BsEmojiSmile,
   BsThreeDotsVertical,
@@ -13,6 +14,7 @@ import {
   BsX,
 } from "react-icons/bs";
 import { format } from "date-fns";
+import VoiceRecorder from "./VoiceRecorder";
 
 function ChatWindow({
   chat,
@@ -21,6 +23,7 @@ function ChatWindow({
   onTyping,
   ws,
   onBack,
+  onChatCleared,
 }) {
   const [messages, setMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState("");
@@ -31,11 +34,20 @@ function ChatWindow({
   const [initialLoad, setInitialLoad] = useState(true);
   const [contextMenu, setContextMenu] = useState(null);
   const [deleteModal, setDeleteModal] = useState(null);
+  const [showChatMenu, setShowChatMenu] = useState(false);
+  const [clearChatModal, setClearChatModal] = useState(false);
+  const [showSearchBar, setShowSearchBar] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [activeSearchMessageId, setActiveSearchMessageId] = useState(null);
   const [replyingTo, setReplyTo] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null);
 
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
+  const searchTimeoutRef = useRef(null);
+  const messageRefs = useRef(new Map());
   const typingTimeoutRef = useRef(null);
   const shouldAutoScrollRef = useRef(true);
 
@@ -63,6 +75,56 @@ function ChatWindow({
       messagesEndRef.current?.scrollIntoView({ behavior });
     });
   }, []);
+
+  const scrollToMessage = useCallback((messageId) => {
+    requestAnimationFrame(() => {
+      const node = messageRefs.current.get(messageId);
+      node?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }, []);
+
+  const focusMessageById = useCallback((messageId) => {
+    setActiveSearchMessageId(messageId);
+    scrollToMessage(messageId);
+  }, [scrollToMessage]);
+
+  const loadMessageContext = useCallback(
+    async (messageId) => {
+      try {
+        const token = localStorage.getItem("token");
+        const response = await fetch(
+          `${API_URL}/chats/${chat._id}/messages/${messageId}/context?limit=24`,
+          { headers: { "x-auth-token": token } },
+        );
+        const data = await response.json();
+
+        if (!response.ok) {
+          toast.error(data.error || "Unable to open message");
+          return;
+        }
+
+        setMessages(data.messages || []);
+        setHasMore(false);
+        setPage(1);
+        setTimeout(() => focusMessageById(messageId), 50);
+      } catch (error) {
+        console.error("Error loading message context:", error);
+        toast.error("Unable to open message");
+      }
+    },
+    [API_URL, chat?._id, focusMessageById],
+  );
+
+  const handleSearchResultClick = (result) => {
+    setSearchQuery(result.message || "");
+    setShowSearchBar(false);
+    setSearchResults([]);
+    if (messages.some((message) => message._id === result._id)) {
+      focusMessageById(result._id);
+      return;
+    }
+    loadMessageContext(result._id);
+  };
 
   // Fetch messages
   const fetchMessages = useCallback(
@@ -135,6 +197,13 @@ function ChatWindow({
       setMessages([]);
       setPage(1);
       setHasMore(true);
+      setContextMenu(null);
+      setShowChatMenu(false);
+      setClearChatModal(false);
+      setShowSearchBar(false);
+      setSearchQuery("");
+      setSearchResults([]);
+      setActiveSearchMessageId(null);
       shouldAutoScrollRef.current = true;
       fetchMessages(1, false);
       markMessagesAsRead();
@@ -184,7 +253,15 @@ function ChatWindow({
       }
 
       if (data.type === "message_deleted" && data.chatId === chat?._id) {
-        setMessages((prev) => prev.filter((m) => m._id !== data.messageId));
+        if (data.message) {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg._id === data.messageId
+                ? { ...data.message, status: "deleted" }
+                : msg,
+            ),
+          );
+        }
       }
 
       if (data.type === "delete_message_error" && data.chatId === chat?._id) {
@@ -196,11 +273,67 @@ function ChatWindow({
     return () => ws.removeEventListener("message", handleMessage);
   }, [ws, chat, scrollToBottom]);
 
+  useEffect(() => {
+    if (!showSearchBar || !searchQuery.trim()) {
+      setSearchResults([]);
+      setSearchLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const trimmedQuery = searchQuery.trim();
+
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    searchTimeoutRef.current = setTimeout(async () => {
+      try {
+        setSearchLoading(true);
+        const token = localStorage.getItem("token");
+        const response = await fetch(
+          `${API_URL}/chats/${chat._id}/messages/search?q=${encodeURIComponent(trimmedQuery)}&limit=8`,
+          {
+            headers: { "x-auth-token": token },
+            signal: controller.signal,
+          },
+        );
+        const data = await response.json();
+
+        if (!response.ok) {
+          setSearchResults([]);
+          return;
+        }
+
+        setSearchResults(Array.isArray(data.results) ? data.results : []);
+      } catch (error) {
+        if (error.name !== "AbortError") {
+          console.error("Error searching messages:", error);
+        }
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 250);
+
+    return () => {
+      controller.abort();
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, [API_URL, chat?._id, searchQuery, showSearchBar]);
+
   // Close context menu on click outside
   useEffect(() => {
     const handleClickOutside = (e) => {
-      if (!e.target.closest(".context-menu")) {
+      if (
+        !e.target.closest(".context-menu") &&
+        !e.target.closest(".chat-header-menu") &&
+        !e.target.closest(".message-search-panel")
+      ) {
         setContextMenu(null);
+        setShowChatMenu(false);
+        setShowSearchBar(false);
       }
     };
 
@@ -273,6 +406,57 @@ function ChatWindow({
   const handleDeleteMessage = (message) => {
     setDeleteModal(message);
     setContextMenu(null);
+  };
+
+  const handleVoiceSend = async (voiceUrl, voiceDuration) => {
+    try {
+      const result = await onSendMessage(chat._id, "", {
+        messageType: "voice",
+        voiceUrl,
+        voiceDuration,
+      });
+
+      if (result) {
+        setMessages((prev) => [...prev, { ...result, status: "sent" }]);
+        shouldAutoScrollRef.current = true;
+        scrollToBottom();
+      } else {
+        toast.error("Failed to send voice message");
+      }
+    } catch (error) {
+      console.error("Error sending voice message:", error);
+      toast.error("Failed to send voice message");
+    }
+  };
+
+  const performClearChat = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${API_URL}/chats/${chat._id}/clear`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-auth-token": token,
+        },
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        toast.error(data.error || "Failed to clear chat");
+        return;
+      }
+
+      setMessages([]);
+      setShowChatMenu(false);
+      onChatCleared?.();
+      toast.success("Chat cleared");
+    } catch (error) {
+      console.error("Error clearing chat:", error);
+      toast.error("Failed to clear chat");
+    } finally {
+      setClearChatModal(false);
+    }
   };
 
   // Mark messages as read
@@ -448,7 +632,15 @@ function ChatWindow({
       const data = await response.json();
 
       if (response.ok) {
-        setMessages((prev) => prev.filter((m) => m._id !== deleteModal._id));
+        if (data.message) {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg._id === deleteModal._id
+                ? { ...data.message, status: "deleted" }
+                : msg,
+            ),
+          );
+        }
         toast.success("Message deleted for everyone");
       } else {
         toast.error(data.error || "Failed to delete message");
@@ -496,6 +688,14 @@ function ChatWindow({
     return format(new Date(date), "hh:mm a");
   };
 
+  const formatVoiceDuration = (seconds) => {
+    if (seconds == null || Number.isNaN(Number(seconds))) return "";
+    const total = Number(seconds);
+    const mins = Math.floor(total / 60);
+    const secs = total % 60;
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
+  };
+
   if (!chat || !otherUser) {
     return (
       <div className="flex-1 flex items-center justify-center bg-[#efeae2]">
@@ -513,8 +713,8 @@ function ChatWindow({
   return (
     <div className="flex-1 flex flex-col bg-[#efeae2]">
       {/* Chat Header */}
-      <div className="bg-[#f0f2f5] px-4 py-3 flex items-center justify-between border-b border-gray-200">
-        <div className="flex items-center space-x-3">
+      <div className="chat-header-menu relative bg-[#f0f2f5] px-4 py-3 flex items-center justify-between border-b border-gray-200">
+        <div className="flex min-w-0 items-center space-x-3">
           <button onClick={onBack} className="md:hidden text-gray-600">
             <BsArrowLeft size={20} />
           </button>
@@ -538,9 +738,75 @@ function ChatWindow({
             </p>
           </div>
         </div>
-        <button className="text-gray-600 hover:text-gray-800">
+        <div className="message-search-panel relative mx-2 hidden min-w-0 flex-1 max-w-md md:block">
+          <div className="relative">
+            <BsSearch className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setShowSearchBar(true);
+              }}
+              onFocus={() => setShowSearchBar(true)}
+              placeholder="Search messages"
+              className="w-full rounded-full border border-gray-200 bg-white py-2 pl-9 pr-4 text-sm text-gray-700 outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
+            />
+          </div>
+          {showSearchBar && searchQuery.trim() && (
+            <div className="absolute left-0 right-0 top-full z-50 mt-2 max-h-72 overflow-y-auto rounded-2xl border border-gray-100 bg-white shadow-2xl">
+              {searchLoading ? (
+                <div className="px-4 py-3 text-sm text-gray-500">
+                  Searching messages...
+                </div>
+              ) : searchResults.length > 0 ? (
+                searchResults.map((result) => (
+                  <button
+                    key={result._id}
+                    onClick={() => handleSearchResultClick(result)}
+                    className="w-full border-b border-gray-100 px-4 py-3 text-left hover:bg-green-50"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-gray-800">
+                          {result.message}
+                        </p>
+                        <p className="truncate text-xs text-gray-500">
+                          {result.senderName || "Message"} ·{" "}
+                          {format(new Date(result.createdAt), "MMM d, h:mm a")}
+                        </p>
+                      </div>
+                      <span className="text-xs text-green-600">Open</span>
+                    </div>
+                  </button>
+                ))
+              ) : (
+                <div className="px-4 py-3 text-sm text-gray-500">
+                  No messages found
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        <button
+          onClick={() => setShowChatMenu((prev) => !prev)}
+          className="text-gray-600 hover:text-gray-800"
+        >
           <BsThreeDotsVertical size={20} />
         </button>
+        {showChatMenu && (
+          <div className="absolute right-4 top-14 z-50 w-52 rounded-xl border border-gray-100 bg-white py-2 shadow-xl">
+            <button
+              onClick={() => {
+                setShowChatMenu(false);
+                setClearChatModal(true);
+              }}
+              className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+            >
+              Clear Chat
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Messages */}
@@ -590,6 +856,16 @@ function ChatWindow({
               key={msg._id || msg.tempId}
               onContextMenu={(e) => handleRightClick(e, msg)}
               className={`flex ${isOwn ? "justify-end" : "justify-start"} message-enter`}
+              ref={(node) => {
+                if (!msg._id) {
+                  return;
+                }
+                if (node) {
+                  messageRefs.current.set(msg._id, node);
+                } else {
+                  messageRefs.current.delete(msg._id);
+                }
+              }}
             >
               <div
                 className={`flex items-end space-x-2 max-w-[70%] ${isOwn ? "flex-row-reverse space-x-reverse" : ""}`}
@@ -608,6 +884,10 @@ function ChatWindow({
                     isOwn
                       ? "bg-[#d9fdd3] text-gray-800 rounded-tr-none"
                       : "bg-white text-gray-800 rounded-tl-none"
+                  } ${
+                    activeSearchMessageId === msg._id
+                      ? "ring-2 ring-green-500 ring-offset-2 ring-offset-[#efeae2]"
+                      : ""
                   }`}
                 >
                   {repliedMessage && (
@@ -623,7 +903,28 @@ function ChatWindow({
                       (edited)
                     </span>
                   )}
-                  <p className="text-sm break-words">{msg.message}</p>
+                  {msg.isDeleted ? (
+                    <div className="flex items-center space-x-2 text-sm italic text-gray-500">
+                      <BsTrash size={14} className="shrink-0" />
+                      <span>
+                        {msg.deletedStatus ||
+                          (String(msg.deletedBy) === String(currentUserId)
+                            ? "You deleted this message"
+                            : "This message was deleted")}
+                      </span>
+                    </div>
+                  ) : msg.messageType === "voice" ? (
+                    <div className="flex items-center space-x-2 text-sm text-gray-700">
+                      <span className="text-green-600">Voice message</span>
+                      {msg.voiceDuration != null && (
+                        <span className="text-xs text-gray-500">
+                          {formatVoiceDuration(msg.voiceDuration)}
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-sm break-words">{msg.message}</p>
+                  )}
                   <div className="flex justify-end items-center space-x-1 mt-1">
                     <span className="text-[10px] text-gray-500">
                       {formatTime(msg.createdAt)}
@@ -698,6 +999,8 @@ function ChatWindow({
             <BsEmojiSmile size={24} />
           </button>
 
+          <VoiceRecorder onVoiceSend={handleVoiceSend} disabled={!chat?._id} />
+
           <input
             type="text"
             value={inputMessage}
@@ -709,13 +1012,15 @@ function ChatWindow({
             className="flex-1 px-4 py-2 bg-white rounded-lg text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-green-500"
           />
 
-          <button
-            onClick={handleSendMessage}
-            disabled={!inputMessage.trim() && !editingMessage}
-            className="text-green-600 hover:text-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <BsSend size={22} />
-          </button>
+          {inputMessage.trim() || editingMessage ? (
+            <button
+              onClick={handleSendMessage}
+              disabled={!inputMessage.trim() && !editingMessage}
+              className="text-green-600 hover:text-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <BsSend size={22} />
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -799,6 +1104,36 @@ function ChatWindow({
               <button
                 onClick={() => setDeleteModal(null)}
                 className="w-full py-2 text-gray-500 text-sm hover:underline"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {clearChatModal && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="p-6">
+              <h4 className="mb-2 text-lg font-semibold text-gray-800">
+                Clear chat?
+              </h4>
+              <p className="text-sm text-gray-500">
+                This will remove the conversation from your view only. The
+                other person will still see their copy.
+              </p>
+            </div>
+            <div className="bg-gray-50 px-6 py-4 space-y-2 flex flex-col">
+              <button
+                onClick={performClearChat}
+                className="w-full rounded-lg bg-red-500 py-2 font-medium text-white transition-colors hover:bg-red-600"
+              >
+                Clear chat
+              </button>
+              <button
+                onClick={() => setClearChatModal(false)}
+                className="w-full py-2 text-sm text-gray-500 hover:underline"
               >
                 Cancel
               </button>
