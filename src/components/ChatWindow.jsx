@@ -1101,12 +1101,30 @@ function ChatWindow({
                       </span>
                     </div>
                   ) : msg.messageType === "voice" ? (
-                    <div className="flex items-center space-x-2 text-sm text-gray-700">
-                      <span className="text-green-600">Voice message</span>
-                      {msg.voiceDuration != null && (
-                        <span className="text-xs text-gray-500">
-                          {formatVoiceDuration(msg.voiceDuration)}
+                    <div className="space-y-2">
+                      <div className="flex items-center space-x-2 text-sm text-gray-700">
+                        <span className="text-green-600 font-medium">
+                          Voice note
                         </span>
+                        {msg.voiceDuration != null && (
+                          <span className="text-xs text-gray-500">
+                            {formatVoiceDuration(msg.voiceDuration)}
+                          </span>
+                        )}
+                      </div>
+                      {msg.voiceUrl ? (
+                        <audio
+                          controls
+                          preload="none"
+                          src={msg.voiceUrl}
+                          className="w-full max-w-[260px] h-9"
+                        >
+                          Your browser does not support audio playback.
+                        </audio>
+                      ) : (
+                        <p className="text-xs text-gray-500">
+                          Voice message unavailable
+                        </p>
                       )}
                     </div>
                   ) : (
