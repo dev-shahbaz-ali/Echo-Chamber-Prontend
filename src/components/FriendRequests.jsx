@@ -6,7 +6,7 @@ function FriendRequests({ onRequestAction, currentUser }) {
   const [requests, setRequests] = useState({ received: [], sent: [] });
   const [loading, setLoading] = useState(true);
 
-  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+  const API_URL = "/api";
 
   useEffect(() => {
     fetchRequests();
@@ -21,10 +21,14 @@ function FriendRequests({ onRequestAction, currentUser }) {
       const data = await response.json();
 
       const received = Array.isArray(data.received)
-        ? data.received.filter((request) => request?.senderId?.username)
+        ? data.received.filter(
+            (request) => request?.username || request?.senderId?.username,
+          )
         : [];
       const sent = Array.isArray(data.sent)
-        ? data.sent.filter((request) => request?.receiverId?.username)
+        ? data.sent.filter(
+            (request) => request?.username || request?.receiverId?.username,
+          )
         : [];
 
       setRequests({
@@ -111,87 +115,232 @@ function FriendRequests({ onRequestAction, currentUser }) {
   }
 
   return (
-    <div className="space-y-4">
-      {/* Received Requests */}
-      {requests.received.length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold text-gray-400 mb-2 flex items-center">
-            <BsPersonAdd className="mr-2" /> Received Requests (
-            {requests.received.length})
-          </h3>
-          <div className="space-y-2">
-            {requests.received.map((request) => (
-              <div key={request._id} className="bg-gray-700 rounded-lg p-3">
-                <div className="flex items-center space-x-3">
-                  <img
-                    src={request.senderId.avatar}
-                    alt={request.senderId.username}
-                    className="w-10 h-10 rounded-full object-cover"
-                  />
-                  <div className="flex-1">
-                    <h4 className="font-semibold text-white">
-                      {request.senderId.username}
-                    </h4>
-                    <p className="text-xs text-gray-400">{request.message}</p>
+    <div className="h-full flex flex-col bg-zinc-900 text-white rounded-2xl overflow-hidden">
+      {/* Header */}
+      <div className="sticky top-0 z-10 bg-zinc-900/90 backdrop-blur border-b border-zinc-800 px-4 py-4">
+        <h2 className="text-lg font-bold">Friend Requests</h2>
+
+        <p className="text-xs text-zinc-500 mt-1">
+          Manage incoming and outgoing requests
+        </p>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-3 space-y-6">
+        {/* RECEIVED REQUESTS */}
+        {requests.received.length > 0 && (
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <div className="bg-green-500/10 p-2 rounded-xl">
+                <BsPersonAdd className="text-green-400" />
+              </div>
+
+              <div>
+                <h3 className="font-semibold text-white">Received Requests</h3>
+
+                <p className="text-xs text-zinc-500">
+                  {requests.received.length} pending requests
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {requests.received.map((request) => {
+                const user = request.senderId || request;
+
+                return (
+                  <div
+                    key={request.id || request._id}
+                    className="
+                    group
+                    bg-zinc-800/70
+                    border border-zinc-700
+                    hover:border-green-500/30
+                    rounded-2xl
+                    p-4
+                    transition-all duration-200
+                    hover:shadow-lg hover:shadow-green-500/5
+                  "
+                  >
+                    <div className="flex items-center gap-3">
+                      {/* Avatar */}
+                      <div className="relative">
+                        <img
+                          src={user.avatar}
+                          alt={user.username}
+                          className="
+                          w-14 h-14 rounded-full
+                          object-cover
+                          ring-2 ring-zinc-700
+                        "
+                        />
+
+                        <div
+                          className="
+                        absolute bottom-0 right-0
+                        w-3.5 h-3.5
+                        bg-green-500
+                        rounded-full
+                        border-2 border-zinc-900
+                      "
+                        />
+                      </div>
+
+                      {/* User Info */}
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-semibold text-white truncate">
+                          {user.username}
+                        </h4>
+
+                        <p className="text-sm text-zinc-400 truncate mt-1">
+                          {request.message || "Wants to connect with you"}
+                        </p>
+                      </div>
+
+                      {/* Action Buttons */}
+                      <div className="flex items-center gap-2">
+                        {/* Accept */}
+                        <button
+                          onClick={() =>
+                            acceptRequest(request.id || request._id)
+                          }
+                          className="
+                          bg-green-500 hover:bg-green-600
+                          active:scale-95
+                          transition-all
+                          p-3 rounded-xl
+                          shadow-lg shadow-green-500/20
+                        "
+                          title="Accept Request"
+                        >
+                          <BsCheck size={18} />
+                        </button>
+
+                        {/* Reject */}
+                        <button
+                          onClick={() =>
+                            rejectRequest(request.id || request._id)
+                          }
+                          className="
+                          bg-zinc-700 hover:bg-red-500
+                          active:scale-95
+                          transition-all
+                          p-3 rounded-xl
+                        "
+                          title="Reject Request"
+                        >
+                          <BsX size={18} />
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => acceptRequest(request._id)}
-                      className="bg-green-500 hover:bg-green-600 text-white p-2 rounded-lg transition-colors"
-                      title="Accept"
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* SENT REQUESTS */}
+        {requests.sent.length > 0 && (
+          <div>
+            <div className="flex items-center gap-2 mb-3">
+              <div className="bg-yellow-500/10 p-2 rounded-xl">
+                <BsClock className="text-yellow-400" />
+              </div>
+
+              <div>
+                <h3 className="font-semibold text-white">Sent Requests</h3>
+
+                <p className="text-xs text-zinc-500">Waiting for response</p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {requests.sent.map((request) => (
+                <div
+                  key={request._id}
+                  className="
+                  bg-zinc-800/50
+                  border border-zinc-700
+                  rounded-2xl
+                  p-4
+                  opacity-90
+                  hover:bg-zinc-800/80
+                  transition-all
+                "
+                >
+                  <div className="flex items-center gap-3">
+                    {/* Avatar */}
+                    <img
+                      src={request.receiverId.avatar}
+                      alt={request.receiverId.username}
+                      className="
+                      w-14 h-14 rounded-full
+                      object-cover
+                      ring-2 ring-zinc-700
+                    "
+                    />
+
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-semibold truncate">
+                        {request.receiverId.username}
+                      </h4>
+
+                      <p className="text-sm text-zinc-400 mt-1">
+                        Request pending...
+                      </p>
+                    </div>
+
+                    {/* Pending Badge */}
+                    <div
+                      className="
+                      bg-yellow-500/10
+                      text-yellow-400
+                      px-3 py-1.5
+                      rounded-full
+                      text-xs font-medium
+                      border border-yellow-500/20
+                    "
                     >
-                      <BsCheck size={16} />
-                    </button>
-                    <button
-                      onClick={() => rejectRequest(request._id)}
-                      className="bg-red-500 hover:bg-red-600 text-white p-2 rounded-lg transition-colors"
-                      title="Reject"
-                    >
-                      <BsX size={16} />
-                    </button>
+                      Pending
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Sent Requests */}
-      {requests.sent.length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold text-gray-400 mb-2 flex items-center">
-            <BsClock className="mr-2" /> Sent Requests ({requests.sent.length})
-          </h3>
-          <div className="space-y-2">
-            {requests.sent.map((request) => (
-              <div
-                key={request._id}
-                className="bg-gray-700 rounded-lg p-3 opacity-75"
-              >
-                <div className="flex items-center space-x-3">
-                  <img
-                    src={request.receiverId.avatar}
-                    alt={request.receiverId.username}
-                    className="w-10 h-10 rounded-full object-cover"
-                  />
-                  <div className="flex-1">
-                    <h4 className="font-semibold text-white">
-                      {request.receiverId.username}
-                    </h4>
-                    <p className="text-xs text-gray-400">Request pending...</p>
-                  </div>
-                  <span className="text-yellow-500 text-xs">Pending</span>
-                </div>
-              </div>
-            ))}
+        {/* EMPTY STATE */}
+        {requests.received.length === 0 && requests.sent.length === 0 && (
+          <div
+            className="
+            flex flex-col items-center justify-center
+            text-center
+            py-20
+          "
+          >
+            <div
+              className="
+              bg-zinc-800
+              p-5
+              rounded-3xl
+              mb-4
+            "
+            >
+              <BsPersonAdd className="text-5xl text-zinc-600" />
+            </div>
+
+            <h3 className="text-lg font-semibold text-zinc-300">
+              No Friend Requests
+            </h3>
+
+            <p className="text-sm text-zinc-500 mt-2 max-w-xs">
+              When someone sends you a request, it will appear here.
+            </p>
           </div>
-        </div>
-      )}
-
-      {requests.received.length === 0 && requests.sent.length === 0 && (
-        <div className="text-center text-gray-400 py-4">No friend requests</div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

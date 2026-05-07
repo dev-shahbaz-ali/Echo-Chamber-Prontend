@@ -51,20 +51,27 @@ function ChatWindow({
   const typingTimeoutRef = useRef(null);
   const shouldAutoScrollRef = useRef(true);
 
-  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
-  const currentUserId = currentUser?._id || currentUser?.id;
+  const API_URL = "/api";
+  const currentUserId = currentUser?.id || currentUser?._id;
   const otherUser =
     chat?.otherParticipant ||
-    chat?.participants?.find((p) => (p._id || p.id) !== currentUserId);
-  const isSameChatId = useCallback((a, b) => String(a) === String(b), []);
+    chat?.participants?.find(
+      (p) => String(p.id || p._id) !== String(currentUserId),
+    );
+  const isSameChatId = useCallback(
+    (a, b) => a && b && String(a) === String(b),
+    [],
+  );
 
   const isMessageForChat = useCallback((message, chatId) => {
-    if (!message?.chatId) return false;
-    return String(message.chatId) === String(chatId);
+    const mChatId =
+      message?.chatId || message?.chat_id || message?.conversation_id;
+    if (!mChatId) return false;
+    return String(mChatId) === String(chatId);
   }, []);
 
   const getMessageKey = (message) =>
-    message?._id || message?.clientMessageId || message?.tempId;
+    message?.id || message?._id || message?.clientMessageId || message?.tempId;
 
   const mergeMessages = (prevMessages, incomingMessages) => {
     const next = [...prevMessages];
@@ -73,7 +80,7 @@ function ChatWindow({
       if (!incoming) return;
 
       const incomingClientId = incoming.clientMessageId || null;
-      const incomingId = incoming._id || null;
+      const incomingId = incoming.id || incoming._id || null;
 
       const existingIndex = next.findIndex((msg) => {
         if (!msg) return false;
@@ -82,7 +89,7 @@ function ChatWindow({
           return true;
         }
 
-        if (incomingId && msg._id === incomingId) {
+        if (incomingId && (msg.id === incomingId || msg._id === incomingId)) {
           return true;
         }
 
@@ -110,6 +117,9 @@ function ChatWindow({
         new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
     );
   };
+
+  const getMessageCreatedAt = (message) =>
+    message?.createdAt || message?.created_at || message?.timestamp || null;
 
   const waitForWebSocketOpen = useCallback(
     (timeoutMs = 3000) =>
@@ -143,20 +153,94 @@ function ChatWindow({
 
   const sendRealtimeMessage = useCallback(
     async (payload) => {
-      const isOpen = await waitForWebSocketOpen();
-      if (!isOpen) return false;
+      console.log("📤 Attempting to send via WebSocket:", payload.type);
+      console.log("  - WebSocket state:", ws?.readyState);
 
-      ws.send(
-        JSON.stringify({
-          ...payload,
-          chatId: chat._id,
-        }),
-      );
+      // Check WebSocket connection
+      if (!ws) {
+        console.log("❌ No WebSocket connection available");
+        return false;
+      }
 
-      return true;
+      if (ws.readyState !== WebSocket.OPEN) {
+        console.log(
+          `❌ WebSocket not open (state: ${ws.readyState}), falling back to REST`,
+        );
+        return false;
+      }
+
+      try {
+        const messageToSend = {
+          type: payload.type,
+          chatId: String(chat?.id || chat?._id),
+          message: payload.message,
+          messageType: payload.messageType || "text",
+          senderId: currentUserId,
+          clientMessageId: payload.clientMessageId,
+        };
+
+        // Add optional fields
+        if (payload.replyTo) messageToSend.replyTo = payload.replyTo;
+        if (payload.voiceUrl) messageToSend.voiceUrl = payload.voiceUrl;
+        if (payload.voiceDuration)
+          messageToSend.voiceDuration = payload.voiceDuration;
+
+        console.log("📤 Sending WebSocket message:", messageToSend);
+        ws.send(JSON.stringify(messageToSend));
+        console.log("✅ Message sent via WebSocket");
+        return true;
+      } catch (error) {
+        console.error("❌ Error sending via WebSocket:", error);
+        return false;
+      }
     },
-    [ws, chat?._id, waitForWebSocketOpen],
+    [ws, chat?.id, chat?._id, currentUserId],
   );
+  // Add this right after your useRef declarations
+  useEffect(() => {
+    console.log("🔍 ChatWindow Debug Info:");
+    console.log("  - WebSocket exists:", !!ws);
+    console.log("  - WebSocket readyState:", ws?.readyState);
+    console.log(
+      "  - WebSocket OPEN status:",
+      ws?.readyState === WebSocket.OPEN,
+    );
+    console.log("  - Chat ID:", chat?.id || chat?._id);
+    console.log("  - Current User ID:", currentUserId);
+    console.log("  - Other User:", otherUser?.username);
+  }, [ws, chat, currentUserId]);
+
+  // Add near other useEffects
+  useEffect(() => {
+    if (!ws) {
+      console.log("⚠️ WebSocket not available");
+      return;
+    }
+
+    console.log(
+      "WebSocket status:",
+      ws.readyState === WebSocket.CONNECTING
+        ? "Connecting"
+        : ws.readyState === WebSocket.OPEN
+          ? "Open ✅"
+          : ws.readyState === WebSocket.CLOSING
+            ? "Closing"
+            : ws.readyState === WebSocket.CLOSED
+              ? "Closed"
+              : "Unknown",
+    );
+
+    const handleOpen = () => console.log("✅ WebSocket opened for chat");
+    const handleClose = () => console.log("❌ WebSocket closed for chat");
+
+    ws.addEventListener("open", handleOpen);
+    ws.addEventListener("close", handleClose);
+
+    return () => {
+      ws.removeEventListener("open", handleOpen);
+      ws.removeEventListener("close", handleClose);
+    };
+  }, [ws]);
 
   // Check if user is near bottom
   const isNearBottom = useCallback(() => {
@@ -191,13 +275,144 @@ function ChatWindow({
     },
     [scrollToMessage],
   );
+  // Add this effect in ChatWindow.jsx right after the existing WebSocket effect
+
+  // Handle WebSocket messages for this specific chat
+  useEffect(() => {
+    if (!ws) return;
+
+    const handleWebSocketMessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        // Only process messages for this chat
+        if (
+          data.chatId &&
+          String(data.chatId) !== String(chat?.id || chat?._id)
+        ) {
+          return;
+        }
+
+        switch (data.type) {
+          case "new_message":
+          case "receive_message":
+            console.log("📨 Received message via WS:", data);
+
+            if (data.message) {
+              // Add the new message to state
+              setMessages((prev) => {
+                // Check if message already exists
+                const exists = prev.some(
+                  (m) =>
+                    (m.id || m._id) === (data.message.id || data.message._id),
+                );
+                if (exists) return prev;
+
+                const newMessages = [...prev, data.message];
+                // Sort by timestamp
+                return newMessages.sort(
+                  (a, b) =>
+                    new Date(a.createdAt).getTime() -
+                    new Date(b.createdAt).getTime(),
+                );
+              });
+
+              // Auto-scroll if near bottom
+              if (shouldAutoScrollRef.current) {
+                setTimeout(() => scrollToBottom(), 100);
+              }
+
+              // Mark as read if it's from other user
+              const senderId =
+                data.message.sender_id ||
+                data.message.senderId?.id ||
+                data.message.senderId;
+              if (String(senderId) !== String(currentUserId)) {
+                markMessagesAsRead([data.message.id || data.message._id]);
+              }
+            }
+            break;
+
+          case "message_sent":
+            console.log("✅ Message sent confirmation:", data);
+            // Update the message status
+            if (data.message) {
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.clientMessageId === data.message.clientMessageId ||
+                  (msg.id || msg._id) === (data.message.id || data.message._id)
+                    ? { ...data.message, status: "sent" }
+                    : msg,
+                ),
+              );
+            }
+            break;
+
+          case "user_typing":
+            if (data.isTyping) {
+              setOtherUserTyping(true);
+              // Auto-hide typing indicator after 2 seconds of no updates
+              const timeoutId = setTimeout(
+                () => setOtherUserTyping(false),
+                2000,
+              );
+              return () => clearTimeout(timeoutId);
+            } else {
+              setOtherUserTyping(false);
+            }
+            break;
+
+          case "message_edited":
+            if (data.message) {
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  (msg.id || msg._id) === (data.message.id || data.message._id)
+                    ? { ...data.message, isEdited: true }
+                    : msg,
+                ),
+              );
+            }
+            break;
+
+          case "message_deleted":
+            if (data.messageId) {
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  (msg.id || msg._id) === data.messageId
+                    ? {
+                        ...msg,
+                        isDeleted: true,
+                        message: "This message was deleted",
+                      }
+                    : msg,
+                ),
+              );
+            }
+            break;
+
+          default:
+            // Ignore other message types
+            break;
+        }
+      } catch (error) {
+        console.error("Error parsing WebSocket message:", error);
+      }
+    };
+
+    ws.addEventListener("message", handleWebSocketMessage);
+
+    return () => {
+      ws.removeEventListener("message", handleWebSocketMessage);
+    };
+  }, [ws, chat?.id, chat?._id, currentUserId, scrollToBottom]);
 
   const loadMessageContext = useCallback(
     async (messageId) => {
+      const chatId = chat.id || chat._id;
       try {
         const token = localStorage.getItem("token");
         const response = await fetch(
-          `${API_URL}/chats/${chat._id}/messages/${messageId}/context?limit=24`,
+          `${API_URL}/chats/${chatId}/messages/${messageId}/context?limit=24`,
           { headers: { "x-auth-token": token } },
         );
         const data = await response.json();
@@ -216,25 +431,27 @@ function ChatWindow({
         toast.error("Unable to open message");
       }
     },
-    [API_URL, chat?._id, focusMessageById],
+    [API_URL, chat?.id, chat?._id, focusMessageById],
   );
 
   const handleSearchResultClick = (result) => {
+    const resId = result.id || result._id;
     setSearchQuery(result.message || "");
     setShowSearchBar(false);
     setSearchResults([]);
-    if (messages.some((message) => message._id === result._id)) {
-      focusMessageById(result._id);
+    if (messages.some((message) => (message.id || message._id) === resId)) {
+      focusMessageById(resId);
       return;
     }
-    loadMessageContext(result._id);
+    loadMessageContext(resId);
   };
 
   const fetchMessages = useCallback(
     async (pageNum = 1, append = false) => {
       // Safety check
-      if (!chat?._id) {
-        console.error("Cannot fetch messages: chat._id is undefined");
+      const chatId = chat?.id || chat?._id;
+      if (!chatId) {
+        console.error("Cannot fetch messages: chatId is undefined");
         setMessages([]); // Set empty messages array
         setLoading(false);
         return;
@@ -250,13 +467,13 @@ function ChatWindow({
 
         const token = localStorage.getItem("token");
         const response = await fetch(
-          `${API_URL}/chats/${chat._id}/messages?page=${pageNum}&limit=50`,
+          `${API_URL}/chats/${chatId}/messages?page=${pageNum}&limit=50`,
           { headers: { "x-auth-token": token } },
         );
 
         // Handle 404 specially
         if (response.status === 404) {
-          console.warn(`Chat ${chat._id} not found or has no messages`);
+          console.warn(`Chat ${chatId} not found or has no messages`);
           setMessages([]);
           setHasMore(false);
           setLoading(false);
@@ -281,7 +498,7 @@ function ChatWindow({
         } else {
           setMessages((prev) =>
             mergeMessages(
-              prev.filter((message) => isMessageForChat(message, chat._id)),
+              prev.filter((message) => isMessageForChat(message, chatId)),
               data.messages || [],
             ),
           );
@@ -299,7 +516,7 @@ function ChatWindow({
         setLoading(false);
       }
     },
-    [chat?._id, initialLoad, scrollToBottom, API_URL],
+    [chat?.id, chat?._id, initialLoad, scrollToBottom, API_URL],
   );
 
   // Load older messages when scrolling up
@@ -337,9 +554,8 @@ function ChatWindow({
       setActiveSearchMessageId(null);
       shouldAutoScrollRef.current = true;
       fetchMessages(1, false);
-      markMessagesAsRead();
     }
-  }, [chat?._id]);
+  }, [chat?.id, chat?._id]);
 
   // Handle WebSocket messages
   useEffect(() => {
@@ -348,22 +564,32 @@ function ChatWindow({
     const handleMessage = (event) => {
       const data = JSON.parse(event.data);
 
+      const isIncomingMessage =
+        data.type === "receive_message" ||
+        data.type === "new_message" ||
+        data.type === "message_sent";
+
       if (
-        data.type === "receive_message" &&
-        isSameChatId(data.chatId, chat?._id)
+        isIncomingMessage &&
+        isSameChatId(data.chatId, chat?.id || chat?._id)
       ) {
+        const incomingMessage = data.message || data;
+
         setMessages((prev) => {
-          const newMessages = mergeMessages(prev, [data.message]);
+          const newMessages = mergeMessages(prev, [incomingMessage]);
           if (shouldAutoScrollRef.current) {
             setTimeout(() => scrollToBottom(), 50);
           }
           return newMessages;
         });
 
-        markMessagesAsRead([data.message._id]);
+        markMessagesAsRead([incomingMessage.id || incomingMessage._id]);
       }
 
-      if (data.type === "user_typing" && isSameChatId(data.chatId, chat?._id)) {
+      if (
+        data.type === "user_typing" &&
+        isSameChatId(data.chatId, chat?.id || chat?._id)
+      ) {
         setOtherUserTyping(data.isTyping);
         setTimeout(() => setOtherUserTyping(false), 2000);
       }
@@ -376,12 +602,12 @@ function ChatWindow({
 
       if (
         data.type === "message_deleted" &&
-        isSameChatId(data.chatId, chat?._id)
+        isSameChatId(data.chatId, chat?.id || chat?._id)
       ) {
         if (data.message) {
           setMessages((prev) =>
             prev.map((msg) =>
-              msg._id === data.messageId
+              (msg.id || msg._id) === data.messageId
                 ? { ...data.message, status: "deleted" }
                 : msg,
             ),
@@ -391,7 +617,7 @@ function ChatWindow({
 
       if (
         data.type === "delete_message_error" &&
-        isSameChatId(data.chatId, chat?._id)
+        isSameChatId(data.chatId, chat?.id || chat?._id)
       ) {
         toast.error(data.error || "Failed to delete message");
       }
@@ -420,7 +646,7 @@ function ChatWindow({
         setSearchLoading(true);
         const token = localStorage.getItem("token");
         const response = await fetch(
-          `${API_URL}/chats/${chat._id}/messages/search?q=${encodeURIComponent(trimmedQuery)}&limit=8`,
+          `${API_URL}/chats/${chat.id || chat._id}/messages/search?q=${encodeURIComponent(trimmedQuery)}&limit=8`,
           {
             headers: { "x-auth-token": token },
             signal: controller.signal,
@@ -449,7 +675,7 @@ function ChatWindow({
         clearTimeout(searchTimeoutRef.current);
       }
     };
-  }, [API_URL, chat?._id, searchQuery, showSearchBar]);
+  }, [API_URL, chat?.id, chat?._id, searchQuery, showSearchBar]);
 
   // Close context menu on click outside
   useEffect(() => {
@@ -549,8 +775,8 @@ function ChatWindow({
         clientMessageId,
         message: "",
         senderId: currentUserId,
-        receiverId: otherUser._id || otherUser.id,
-        chatId: chat._id,
+        receiverId: otherUser.id || otherUser._id,
+        chatId: chat.id || chat._id,
         createdAt: new Date().toISOString(),
         isRead: false,
         isDelivered: true,
@@ -573,7 +799,7 @@ function ChatWindow({
       });
 
       if (!sentViaSocket) {
-        const result = await onSendMessage(chat._id, "", {
+        const result = await onSendMessage(chat.id || chat._id, "", {
           messageType: "voice",
           voiceUrl,
           voiceDuration,
@@ -604,13 +830,16 @@ function ChatWindow({
   const performClearChat = async () => {
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(`${API_URL}/chats/${chat._id}/clear`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-auth-token": token,
+      const response = await fetch(
+        `${API_URL}/chats/${chat.id || chat._id}/clear`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-auth-token": token,
+          },
         },
-      });
+      );
 
       const data = await response.json();
 
@@ -635,107 +864,52 @@ function ChatWindow({
   const markMessagesAsRead = async (messageIds = null) => {
     const unreadMessages = messages.filter(
       (m) =>
-        (m.receiverId?._id || m.receiverId || m.receiver_id) ===
-          currentUserId && !m.isRead,
+        (m.receiver_id ||
+          m.receiverId?.id ||
+          m.receiverId?._id ||
+          m.receiverId) == currentUserId && !m.isRead,
     );
 
     if (unreadMessages.length === 0) return;
 
-    const ids = messageIds || unreadMessages.map((m) => m._id);
+    const ids = messageIds || unreadMessages.map((m) => m.id || m._id);
 
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(
         JSON.stringify({
           type: "mark_read",
           messageIds: ids,
-          chatId: chat._id,
+          chatId: chat.id || chat._id,
         }),
       );
     }
 
     setMessages((prev) =>
       prev.map((msg) =>
-        ids.includes(msg._id) ? { ...msg, isRead: true } : msg,
+        ids.includes(msg.id || msg._id) ? { ...msg, isRead: true } : msg,
       ),
     );
   };
 
-  // Send message
+  // Keep THIS version (around line 155) - DELETE the other one
   const handleSendMessage = async () => {
     if (!inputMessage.trim()) return;
 
-    const tempId = Date.now();
-    const clientMessageId =
-      window.crypto && window.crypto.randomUUID
-        ? window.crypto.randomUUID()
-        : `msg-${tempId}-${Math.random().toString(16).slice(2)}`;
+    const clientMessageId = crypto.randomUUID();
     const messageText = inputMessage;
-    const isEdit = !!editingMessage;
-    const currentEditingId = editingMessage?._id;
-    const currentReplyToId = replyingTo?._id;
+    const currentReplyToId = replyingTo?.id || replyingTo?._id;
 
-    // Clear reply and edit states
     setReplyTo(null);
-
-    if (isEdit) {
-      // Handle Edit through API
-      setInputMessage("");
-
-      try {
-        const token = localStorage.getItem("token");
-        const response = await fetch(
-          `${API_URL}/messages/${currentEditingId}`,
-          {
-            method: "PUT",
-            headers: {
-              "Content-Type": "application/json",
-              "x-auth-token": token,
-            },
-            body: JSON.stringify({ message: messageText }),
-          },
-        );
-
-        if (response.ok) {
-          const updatedMessage = await response.json();
-          setMessages((prev) =>
-            prev.map((m) =>
-              m._id === currentEditingId
-                ? { ...updatedMessage, status: "sent" }
-                : m,
-            ),
-          );
-
-          // Send via WebSocket for real-time update
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(
-              JSON.stringify({
-                type: "edit_message",
-                chatId: chat._id,
-                messageId: currentEditingId,
-                message: messageText,
-              }),
-            );
-          }
-        }
-        setEditingMessage(null);
-      } catch (error) {
-        console.error("Error editing message:", error);
-      }
-      return;
-    }
-
-    // Handle New Message
     setInputMessage("");
 
     // Optimistic update
     const tempMessage = {
-      _id: tempId,
-      tempId,
+      _id: clientMessageId,
       clientMessageId,
       message: messageText,
       senderId: currentUserId,
-      receiverId: otherUser._id || otherUser.id,
-      chatId: chat._id,
+      receiverId: otherUser.id || otherUser._id,
+      chatId: chat.id || chat._id,
       createdAt: new Date().toISOString(),
       isRead: false,
       isDelivered: true,
@@ -745,42 +919,32 @@ function ChatWindow({
     };
 
     setMessages((prev) => [...prev, tempMessage]);
-    shouldAutoScrollRef.current = true;
     scrollToBottom();
 
     try {
-      const sentViaSocket = await sendRealtimeMessage({
-        type: "new_message",
-        message: messageText,
-        messageType: "text",
+      // ALWAYS use REST API to save to database
+      console.log("📤 Sending via REST API...");
+      const result = await onSendMessage(chat.id || chat._id, messageText, {
         replyTo: currentReplyToId,
         clientMessageId,
+        messageType: "text",
       });
 
-      if (!sentViaSocket) {
-        const result = await onSendMessage(chat._id, messageText, {
-          replyTo: currentReplyToId,
-          clientMessageId,
-          messageType: "text",
-        });
-
-        if (result) {
-          setMessages((prev) =>
-            mergeMessages(prev, [{ ...result, status: "sent" }]),
-          );
-        } else {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.clientMessageId === clientMessageId
-                ? { ...msg, status: "failed" }
-                : msg,
-            ),
-          );
-          toast.error("Failed to send message");
-        }
+      if (result) {
+        console.log("✅ Message saved to database:", result);
+        // Update the temp message with real data
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.clientMessageId === clientMessageId
+              ? { ...result, status: "sent" }
+              : msg,
+          ),
+        );
+      } else {
+        throw new Error("REST API failed");
       }
     } catch (error) {
-      console.error("Error sending message:", error);
+      console.error("❌ Failed to send message:", error);
       setMessages((prev) =>
         prev.map((msg) =>
           msg.clientMessageId === clientMessageId
@@ -788,6 +952,7 @@ function ChatWindow({
             : msg,
         ),
       );
+      toast.error("Failed to send message");
     }
   };
 
@@ -796,7 +961,11 @@ function ChatWindow({
     if (!deleteModal) return;
 
     if (!forEveryone) {
-      setMessages((prev) => prev.filter((m) => m._id !== deleteModal._id));
+      setMessages((prev) =>
+        prev.filter(
+          (m) => (m.id || m._id) !== (deleteModal.id || deleteModal._id),
+        ),
+      );
       toast.success("Message deleted for you");
       setDeleteModal(null);
       return;
@@ -805,7 +974,7 @@ function ChatWindow({
     try {
       const token = localStorage.getItem("token");
       const response = await fetch(
-        `${API_URL}/chats/${chat._id}/messages/${deleteModal._id}`,
+        `${API_URL}/chats/${chat.id || chat._id}/messages/${deleteModal.id || deleteModal._id}`,
         {
           method: "DELETE",
           headers: {
@@ -822,7 +991,7 @@ function ChatWindow({
         if (data.message) {
           setMessages((prev) =>
             prev.map((msg) =>
-              msg._id === deleteModal._id
+              (msg.id || msg._id) === (deleteModal.id || deleteModal._id)
                 ? { ...data.message, status: "deleted" }
                 : msg,
             ),
@@ -851,7 +1020,7 @@ function ChatWindow({
       ws.send(
         JSON.stringify({
           type: "typing",
-          chatId: chat._id,
+          chatId: chat.id || chat._id,
           isTyping: value.length > 0,
         }),
       );
@@ -862,7 +1031,7 @@ function ChatWindow({
         ws.send(
           JSON.stringify({
             type: "typing",
-            chatId: chat._id,
+            chatId: chat.id || chat._id,
             isTyping: false,
           }),
         );
@@ -872,7 +1041,10 @@ function ChatWindow({
 
   // Format time
   const formatTime = (date) => {
-    return format(new Date(date), "hh:mm a");
+    const value = date || "";
+    const parsed = new Date(value);
+    if (!value || Number.isNaN(parsed.getTime())) return "";
+    return format(parsed, "hh:mm a");
   };
 
   const formatVoiceDuration = (seconds) => {
@@ -949,7 +1121,7 @@ function ChatWindow({
               ) : searchResults.length > 0 ? (
                 searchResults.map((result) => (
                   <button
-                    key={result._id}
+                    key={result.id || result._id}
                     onClick={() => handleSearchResultClick(result)}
                     className="w-full border-b border-gray-100 px-4 py-3 text-left hover:bg-green-50"
                   >
@@ -1026,32 +1198,36 @@ function ChatWindow({
         )}
 
         {messages.map((msg, idx) => {
-          const isOwn =
-            msg.senderId === currentUserId ||
-            msg.senderId?._id === currentUserId;
+          const senderId =
+            msg.sender_id ||
+            msg.senderId?.id ||
+            msg.senderId?._id ||
+            msg.senderId;
+          const isOwn = String(senderId) === String(currentUserId);
+
           const showAvatar =
             !isOwn &&
-            (idx === 0 || messages[idx - 1]?.senderId !== msg.senderId);
+            (idx === 0 ||
+              String(
+                messages[idx - 1]?.sender_id || messages[idx - 1]?.senderId,
+              ) !== String(senderId));
 
           // Find replied message
-          const repliedMessage = msg.replyTo
-            ? messages.find((m) => m._id === msg.replyTo)
+          const replyId = msg.reply_to || msg.replyTo;
+          const repliedMessage = replyId
+            ? messages.find((m) => (m.id || m._id) === replyId)
             : null;
 
           return (
             <div
-              key={msg._id || msg.tempId}
+              key={msg.id || msg._id || msg.tempId}
               onContextMenu={(e) => handleRightClick(e, msg)}
               className={`flex ${isOwn ? "justify-end" : "justify-start"} message-enter`}
               ref={(node) => {
-                if (!msg._id) {
-                  return;
-                }
-                if (node) {
-                  messageRefs.current.set(msg._id, node);
-                } else {
-                  messageRefs.current.delete(msg._id);
-                }
+                const mId = msg.id || msg._id;
+                if (!mId) return;
+                if (node) messageRefs.current.set(mId, node);
+                else messageRefs.current.delete(mId);
               }}
             >
               <div
@@ -1072,7 +1248,7 @@ function ChatWindow({
                       ? "bg-[#d9fdd3] text-gray-800 rounded-tr-none"
                       : "bg-white text-gray-800 rounded-tl-none"
                   } ${
-                    activeSearchMessageId === msg._id
+                    activeSearchMessageId === (msg.id || msg._id)
                       ? "ring-2 ring-green-500 ring-offset-2 ring-offset-[#efeae2]"
                       : ""
                   }`}
@@ -1094,8 +1270,10 @@ function ChatWindow({
                     <div className="flex items-center space-x-2 text-sm italic text-gray-500">
                       <BsTrash size={14} className="shrink-0" />
                       <span>
+                        {/* Handle both field styles */}
                         {msg.deletedStatus ||
-                          (String(msg.deletedBy) === String(currentUserId)
+                          (String(msg.deleted_by || msg.deletedBy) ===
+                          String(currentUserId)
                             ? "You deleted this message"
                             : "This message was deleted")}
                       </span>
@@ -1132,7 +1310,7 @@ function ChatWindow({
                   )}
                   <div className="flex justify-end items-center space-x-1 mt-1">
                     <span className="text-[10px] text-gray-500">
-                      {formatTime(msg.createdAt)}
+                      {formatTime(getMessageCreatedAt(msg))}
                     </span>
                     {isOwn && (
                       <span className="text-[10px]">
@@ -1204,7 +1382,10 @@ function ChatWindow({
             <BsEmojiSmile size={24} />
           </button>
 
-          <VoiceRecorder onVoiceSend={handleVoiceSend} disabled={!chat?._id} />
+          <VoiceRecorder
+            onVoiceSend={handleVoiceSend}
+            disabled={!(chat.id || chat._id)}
+          />
 
           <input
             type="text"
@@ -1253,8 +1434,12 @@ function ChatWindow({
           >
             <BsCopy className="mr-3 text-gray-400" size={16} /> Copy
           </button>
-          {(contextMenu.message.senderId?._id ||
-            contextMenu.message.senderId) === currentUserId && (
+          {String(
+            contextMenu.message.sender_id ||
+              contextMenu.message.senderId?.id ||
+              contextMenu.message.senderId?._id ||
+              contextMenu.message.senderId,
+          ) === String(currentUserId) && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -1297,8 +1482,12 @@ function ChatWindow({
               >
                 Delete for me
               </button>
-              {(deleteModal.senderId?._id || deleteModal.senderId) ===
-                currentUserId && (
+              {String(
+                deleteModal.sender_id ||
+                  deleteModal.senderId?.id ||
+                  deleteModal.senderId?._id ||
+                  deleteModal.senderId,
+              ) === String(currentUserId) && (
                 <button
                   onClick={() => performDelete(true)}
                   className="w-full py-2 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition-colors cursor-pointer"

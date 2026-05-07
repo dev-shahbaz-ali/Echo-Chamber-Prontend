@@ -6,7 +6,7 @@ const AuthContext = createContext();
 export const useAuth = () => useContext(AuthContext);
 
 // API URL
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const API_URL = "/api";
 
 const readResponseError = async (response) => {
   const contentType = response.headers.get("content-type") || "";
@@ -101,19 +101,10 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     try {
-      const response = await fetch(`${API_URL}/auth/login`, {
+      const data = await fetchWithConfig("/auth/login", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
         body: JSON.stringify({ email, password }),
       });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || data.message || "Login failed");
-      }
 
       localStorage.setItem("token", data.token);
       setUser(normalizeUser(data.user || data));
@@ -129,19 +120,10 @@ export const AuthProvider = ({ children }) => {
 
   const register = async (userData) => {
     try {
-      const response = await fetch(`${API_URL}/auth/register`, {
+      const data = await fetchWithConfig("/auth/register", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
         body: JSON.stringify(userData),
       });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || data.message || "Registration failed");
-      }
 
       localStorage.setItem("token", data.token);
       setUser(normalizeUser(data.user || data));

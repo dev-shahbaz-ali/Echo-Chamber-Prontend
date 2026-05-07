@@ -29,6 +29,7 @@ function ChatInterface({ user, onLogout }) {
   const inputRef = useRef(null);
 
   useEffect(() => {
+    // This useEffect is for messagesEndRef, not API_URL
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
@@ -79,7 +80,8 @@ function ChatInterface({ user, onLogout }) {
     const token = localStorage.getItem("echo_chamber_token");
     if (!token) return;
 
-    const websocket = new WebSocket(`ws://localhost:8080`);
+    // Connect to the same port as the backend (5000) - this is correct
+    const websocket = new WebSocket(`ws://localhost:5000`);
 
     websocket.onopen = () => {
       websocket.send(
@@ -97,10 +99,10 @@ function ChatInterface({ user, onLogout }) {
         case "auth_success":
           fetchConversations();
           break;
-        case "new_message":
+        case "receive_message":
           handleNewMessage(data.message);
           break;
-        case "typing":
+        case "user_typing":
           handleTypingIndicator(data);
           break;
         case "user_status":
@@ -127,17 +129,23 @@ function ChatInterface({ user, onLogout }) {
   }, [fetchConversations]);
 
   const handleNewMessage = (message) => {
+    const senderId = message.sender_id || message.senderId;
     if (
-      message.sender_id === selectedChat?.id ||
-      message.receiver_id === selectedChat?.id
+      String(senderId) === String(selectedChat?.id || selectedChat?._id) || // Check both id and _id
+      String(message.receiver_id || message.receiverId) ===
+        String(selectedChat?.id)
     ) {
       setMessages((prev) => [...prev, message]);
     }
 
     fetchConversations();
 
-    if (selectedChat && message.sender_id === selectedChat.id) {
-      markAsRead([message.id]);
+    if (
+      selectedChat &&
+      String(senderId) === String(selectedChat.id || selectedChat._id)
+    ) {
+      // Check both id and _id
+      markAsRead([message.id || message._id]);
     }
   };
 

@@ -1,5 +1,5 @@
-// Dashboard.jsx - Updated
-import React, { useState, useEffect, useCallback } from "react";
+// Dashboard.jsx - Fixed WebSocket implementation
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "../context/AuthContext";
 import FriendsList from "../components/FriendsList";
 import FriendRequests from "../components/FriendRequests";
@@ -10,6 +10,7 @@ import {
   BsPersonAdd,
   BsThreeDotsVertical,
 } from "react-icons/bs";
+import toast from "react-hot-toast";
 
 function Dashboard() {
   const { user, logout } = useAuth();
@@ -20,57 +21,135 @@ function Dashboard() {
   const [notificationCount, setNotificationCount] = useState(0);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [friendsRefreshKey, setFriendsRefreshKey] = useState(0);
+  const [onlineUsers, setOnlineUsers] = useState(new Set());
+
+  const wsRef = useRef(null);
+  const reconnectTimeoutRef = useRef(null);
 
   const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
-  // Initialize WebSocket
+  // Initialize WebSocket with better handling
   useEffect(() => {
     const token = localStorage.getItem("token");
     if (!token) return;
 
-    let websocket = null;
-    let reconnectTimer = null;
     let isClosedByCleanup = false;
 
-    const connect = () => {
-      websocket = new WebSocket("ws://localhost:5000");
+    const connectWebSocket = () => {
+      if (isClosedByCleanup) return;
+
+      const websocket = new WebSocket("ws://localhost:5000");
+      wsRef.current = websocket;
 
       websocket.onopen = () => {
-        websocket.send(JSON.stringify({ type: "auth", token }));
+        console.log("✅ WebSocket connected");
+        // Authenticate
+        websocket.send(
+          JSON.stringify({
+            type: "auth",
+            token,
+          }),
+        );
       };
 
       websocket.onmessage = (event) => {
-        const data = JSON.parse(event.data);
+        try {
+          const data = JSON.parse(event.data);
+          console.log("📨 WebSocket message:", data.type, data);
 
-        if (data.type === "friend_request_received") {
-          setNotificationCount((prev) => prev + 1);
-        }
+          switch (data.type) {
+            case "auth_success":
+              console.log("✅ WebSocket authenticated");
+              break;
 
-        if (data.type === "friend_request_accepted") {
-          window.location.reload();
+            case "friend_request_received":
+              setNotificationCount((prev) => prev + 1);
+              toast.info("New friend request received!");
+              break;
+
+            case "friend_request_accepted":
+              toast.success("Friend request accepted!");
+              setFriendsRefreshKey((prev) => prev + 1);
+              setActiveTab("friends");
+              break;
+
+            case "new_message":
+            case "receive_message":
+              // Handle incoming messages
+              if (data.chatId && data.message) {
+                // Update the selected chat if it's the current one
+                if (
+                  selectedChat &&
+                  String(selectedChat.id || selectedChat._id) ===
+                    String(data.chatId)
+                ) {
+                  // The ChatWindow component will handle this via its own WebSocket listener
+                  // We just need to trigger a refresh of friends list to update last message
+                  setFriendsRefreshKey((prev) => prev + 1);
+                } else {
+                  // Notify about new message in another chat
+                  toast.success(
+                    `New message from ${data.message.senderName || "Someone"}`,
+                  );
+                  setFriendsRefreshKey((prev) => prev + 1);
+                }
+              }
+              break;
+
+            case "message_sent":
+              console.log("✅ Message sent confirmation:", data);
+              break;
+
+            case "user_typing":
+              // Typing indicator handled by ChatWindow
+              break;
+
+            case "friend_status_change":
+              setOnlineUsers((prev) => {
+                const newSet = new Set(prev);
+                if (data.isOnline) {
+                  newSet.add(data.userId);
+                } else {
+                  newSet.delete(data.userId);
+                }
+                return newSet;
+              });
+              break;
+
+            default:
+              console.log("Unhandled message type:", data.type);
+          }
+        } catch (error) {
+          console.error("Error parsing WebSocket message:", error);
         }
       };
 
-      websocket.onerror = () => {
-        websocket?.close();
+      websocket.onerror = (error) => {
+        console.error("WebSocket error:", error);
       };
 
       websocket.onclose = () => {
-        if (!isClosedByCleanup) {
-          reconnectTimer = setTimeout(connect, 1000);
+        console.log("WebSocket disconnected");
+        if (!isClosedByCleanup && reconnectTimeoutRef.current === null) {
+          reconnectTimeoutRef.current = setTimeout(() => {
+            reconnectTimeoutRef.current = null;
+            connectWebSocket();
+          }, 3000);
         }
       };
 
       setWs(websocket);
     };
 
-    connect();
+    connectWebSocket();
 
     return () => {
       isClosedByCleanup = true;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      if (websocket && websocket.readyState === WebSocket.OPEN) {
-        websocket.close();
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.close();
       }
     };
   }, []);
@@ -98,13 +177,17 @@ function Dashboard() {
         body: JSON.stringify({ message, ...extraData }),
       });
 
-      if (response.ok) {
-        return await response.json();
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Failed to send message");
       }
+
+      return await response.json();
     } catch (error) {
       console.error("Error sending message:", error);
+      toast.error("Failed to send message");
+      return null;
     }
-    return null;
   };
 
   const handleSelectChat = (chat) => {
@@ -191,7 +274,7 @@ function Dashboard() {
           {activeTab === "friends" ? (
             <FriendsList
               onSelectChat={handleSelectChat}
-              selectedChatId={selectedChat?._id}
+              selectedChatId={selectedChat?._id || selectedChat?.id}
               currentUser={user}
               refreshKey={friendsRefreshKey}
             />
@@ -200,6 +283,7 @@ function Dashboard() {
               onRequestAction={() => {
                 setNotificationCount(0);
                 setActiveTab("friends");
+                setFriendsRefreshKey((prev) => prev + 1);
               }}
               currentUser={user}
             />
