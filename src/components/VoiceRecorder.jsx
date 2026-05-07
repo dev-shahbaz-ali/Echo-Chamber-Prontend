@@ -90,6 +90,7 @@ function VoiceRecorder({ onVoiceSend, disabled }) {
     }
   };
 
+  // VoiceRecorder.jsx - Updated sendVoiceMessage function
   const sendVoiceMessage = async () => {
     if (!audioURL) return;
 
@@ -114,9 +115,11 @@ function VoiceRecorder({ onVoiceSend, disabled }) {
       });
 
       const data = await uploadResponse.json();
+      console.log("📤 Voice upload response:", data);
 
       if (uploadResponse.ok && data.success) {
-        onVoiceSend(data.voiceUrl, data.duration);
+        // Call the onVoiceSend prop which should send the message via REST API
+        await onVoiceSend(data.voiceUrl, data.duration);
         cancelRecording();
       } else {
         throw new Error(data.error || "Voice upload failed");

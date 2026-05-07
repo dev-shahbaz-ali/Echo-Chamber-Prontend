@@ -762,67 +762,87 @@ function ChatWindow({
     setContextMenu(null);
   };
 
+  // In ChatWindow.jsx - Fixed version without duplicate
   const handleVoiceSend = async (voiceUrl, voiceDuration) => {
-    try {
-      const clientMessageId =
-        window.crypto && window.crypto.randomUUID
-          ? window.crypto.randomUUID()
-          : `voice-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    console.log("🎤 Sending voice message:", { voiceUrl, voiceDuration });
 
+    if (!voiceUrl) {
+      console.error("❌ No voice URL provided");
+      toast.error("Voice recording failed");
+      return;
+    }
+
+    try {
+      const clientMessageId = crypto.randomUUID();
+      const chatId = chat.id || chat._id;
+
+      // Create optimistic message with a unique temporary ID
       const tempMessage = {
-        _id: clientMessageId,
-        tempId: clientMessageId,
+        _id: `temp-${clientMessageId}`, // Mark as temporary
         clientMessageId,
         message: "",
         senderId: currentUserId,
         receiverId: otherUser.id || otherUser._id,
-        chatId: chat.id || chat._id,
+        chatId: chatId,
         createdAt: new Date().toISOString(),
         isRead: false,
         isDelivered: true,
         messageType: "voice",
-        voiceUrl,
-        voiceDuration,
+        fileUrl: voiceUrl,
+        voiceUrl: voiceUrl,
+        voiceDuration: voiceDuration,
         status: "sending",
       };
 
-      setMessages((prev) => mergeMessages(prev, [tempMessage]));
-      shouldAutoScrollRef.current = true;
+      // Add optimistic message
+      setMessages((prev) => [...prev, tempMessage]);
       scrollToBottom();
 
-      const sentViaSocket = await sendRealtimeMessage({
-        type: "new_message",
-        messageType: "voice",
-        voiceUrl,
-        voiceDuration,
-        clientMessageId,
+      // Send via REST API
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${API_URL}/chats/${chatId}/messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-auth-token": token,
+        },
+        body: JSON.stringify({
+          message: "",
+          messageType: "voice",
+          fileUrl: voiceUrl,
+          voiceDuration: voiceDuration,
+          clientMessageId: clientMessageId,
+        }),
       });
 
-      if (!sentViaSocket) {
-        const result = await onSendMessage(chat.id || chat._id, "", {
-          messageType: "voice",
-          voiceUrl,
-          voiceDuration,
-          clientMessageId,
-        });
-
-        if (result) {
-          setMessages((prev) =>
-            mergeMessages(prev, [{ ...result, status: "sent" }]),
-          );
-        } else {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.clientMessageId === clientMessageId
-                ? { ...msg, status: "failed" }
-                : msg,
-            ),
-          );
-          toast.error("Failed to send voice message");
-        }
+      if (!response.ok) {
+        throw new Error(`Failed to send voice message: ${response.status}`);
       }
+
+      const result = await response.json();
+      console.log("✅ Voice message saved:", result);
+
+      // Replace the temporary message with the real one, not add a duplicate
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.clientMessageId === clientMessageId ||
+          msg._id === `temp-${clientMessageId}`
+            ? { ...result, status: "sent", _id: result.id || result._id }
+            : msg,
+        ),
+      );
+
+      toast.success("Voice message sent");
     } catch (error) {
-      console.error("Error sending voice message:", error);
+      console.error("❌ Failed to send voice message:", error);
+      // Remove the temporary message on error
+      setMessages((prev) =>
+        prev.filter(
+          (msg) =>
+            !msg._id?.startsWith("temp-") &&
+            msg.clientMessageId !== clientMessageId,
+        ),
+      );
       toast.error("Failed to send voice message");
     }
   };
@@ -1282,7 +1302,7 @@ function ChatWindow({
                     <div className="space-y-2">
                       <div className="flex items-center space-x-2 text-sm text-gray-700">
                         <span className="text-green-600 font-medium">
-                          Voice note
+                          🎤 Voice note
                         </span>
                         {msg.voiceDuration != null && (
                           <span className="text-xs text-gray-500">
@@ -1290,20 +1310,41 @@ function ChatWindow({
                           </span>
                         )}
                       </div>
-                      {msg.voiceUrl ? (
-                        <audio
-                          controls
-                          preload="none"
-                          src={msg.voiceUrl}
-                          className="w-full max-w-[260px] h-9"
-                        >
-                          Your browser does not support audio playback.
-                        </audio>
-                      ) : (
-                        <p className="text-xs text-gray-500">
-                          Voice message unavailable
-                        </p>
-                      )}
+                      {/* Check both possible field names */}
+                      {(() => {
+                        const audioUrl = msg.fileUrl || msg.voiceUrl;
+                        console.log("🎤 Voice message URL check:", {
+                          audioUrl,
+                          fileUrl: msg.fileUrl,
+                          voiceUrl: msg.voiceUrl,
+                        });
+
+                        if (audioUrl) {
+                          return (
+                            <audio
+                              controls
+                              preload="metadata"
+                              src={audioUrl}
+                              className="w-full max-w-[260px] h-9"
+                              onError={(e) => {
+                                console.error("❌ Audio playback error:", e);
+                                e.target.style.display = "none";
+                              }}
+                            >
+                              Your browser does not support audio playback.
+                            </audio>
+                          );
+                        } else {
+                          return (
+                            <div className="text-xs text-red-500">
+                              Voice message unavailable
+                              <span className="text-gray-400 ml-1">
+                                (No URL)
+                              </span>
+                            </div>
+                          );
+                        }
+                      })()}
                     </div>
                   ) : (
                     <p className="text-sm break-words">{msg.message}</p>
