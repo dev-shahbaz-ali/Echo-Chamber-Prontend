@@ -108,6 +108,15 @@ function FriendRequests({ onRequestAction, currentUser }) {
     }
   };
 
+  // Helper function to get avatar with fallback
+  const getAvatar = (user) => {
+    if (user?.avatar) {
+      return user.avatar;
+    }
+    const username = user?.username || "User";
+    return `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`;
+  };
+
   if (loading) {
     return (
       <div className="text-center text-gray-400 py-4">Loading requests...</div>
@@ -119,7 +128,6 @@ function FriendRequests({ onRequestAction, currentUser }) {
       {/* Header */}
       <div className="sticky top-0 z-10 bg-zinc-900/90 backdrop-blur border-b border-zinc-800 px-4 py-4">
         <h2 className="text-lg font-bold">Friend Requests</h2>
-
         <p className="text-xs text-zinc-500 mt-1">
           Manage incoming and outgoing requests
         </p>
@@ -128,15 +136,13 @@ function FriendRequests({ onRequestAction, currentUser }) {
       <div className="flex-1 overflow-y-auto p-3 space-y-6">
         {/* RECEIVED REQUESTS */}
         {requests.received.length > 0 && (
-          <div>
+          <div key="received-section">
             <div className="flex items-center gap-2 mb-3">
               <div className="bg-green-500/10 p-2 rounded-xl">
                 <BsPersonAdd className="text-green-400" />
               </div>
-
               <div>
                 <h3 className="font-semibold text-white">Received Requests</h3>
-
                 <p className="text-xs text-zinc-500">
                   {requests.received.length} pending requests
                 </p>
@@ -146,86 +152,47 @@ function FriendRequests({ onRequestAction, currentUser }) {
             <div className="space-y-3">
               {requests.received.map((request) => {
                 const user = request.senderId || request;
+                const avatarUrl = getAvatar(user);
+                const requestKey =
+                  request.id ||
+                  request._id ||
+                  `received-${user.id || user._id}`;
 
                 return (
                   <div
-                    key={request.id || request._id}
-                    className="
-                    group
-                    bg-zinc-800/70
-                    border border-zinc-700
-                    hover:border-green-500/30
-                    rounded-2xl
-                    p-4
-                    transition-all duration-200
-                    hover:shadow-lg hover:shadow-green-500/5
-                  "
+                    key={requestKey}
+                    className="group bg-zinc-800/70 border border-zinc-700 hover:border-green-500/30 rounded-2xl p-4 transition-all duration-200 hover:shadow-lg hover:shadow-green-500/5"
                   >
                     <div className="flex items-center gap-3">
                       {/* Avatar */}
                       <div className="relative">
                         <img
-                          src={user.avatar}
-                          alt={user.username}
-                          className="
-                          w-14 h-14 rounded-full
-                          object-cover
-                          ring-2 ring-zinc-700
-                        "
+                          src={avatarUrl}
+                          alt={user.username || "User"}
+                          className="w-14 h-14 rounded-full object-cover ring-2 ring-zinc-700"
+                          onError={(e) => {
+                            e.target.src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.username || "User"}`;
+                          }}
                         />
-
-                        <div
-                          className="
-                        absolute bottom-0 right-0
-                        w-3.5 h-3.5
-                        bg-green-500
-                        rounded-full
-                        border-2 border-zinc-900
-                      "
-                        />
-                      </div>
-
-                      {/* User Info */}
-                      <div className="flex-1 min-w-0">
-                        <h4 className="font-semibold text-white truncate">
-                          {user.username}
-                        </h4>
-
-                        <p className="text-sm text-zinc-400 truncate mt-1">
-                          {request.message || "Wants to connect with you"}
-                        </p>
+                        <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-zinc-900" />
                       </div>
 
                       {/* Action Buttons */}
                       <div className="flex items-center gap-2">
-                        {/* Accept */}
                         <button
                           onClick={() =>
                             acceptRequest(request.id || request._id)
                           }
-                          className="
-                          bg-green-500 hover:bg-green-600
-                          active:scale-95
-                          transition-all
-                          p-3 rounded-xl
-                          shadow-lg shadow-green-500/20
-                        "
+                          className="bg-green-500 hover:bg-green-600 active:scale-95 transition-all p-3 rounded-xl shadow-lg shadow-green-500/20"
                           title="Accept Request"
                         >
                           <BsCheck size={18} />
                         </button>
-
-                        {/* Reject */}
                         <button
                           onClick={() =>
                             rejectRequest(request.id || request._id)
                           }
-                          className="
-                          bg-zinc-700 hover:bg-red-500
-                          active:scale-95
-                          transition-all
-                          p-3 rounded-xl
-                        "
+                          className="bg-zinc-700 hover:bg-red-500 active:scale-95 transition-all p-3 rounded-xl"
                           title="Reject Request"
                         >
                           <BsX size={18} />
@@ -239,102 +206,18 @@ function FriendRequests({ onRequestAction, currentUser }) {
           </div>
         )}
 
-        {/* SENT REQUESTS */}
-        {requests.sent.length > 0 && (
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <div className="bg-yellow-500/10 p-2 rounded-xl">
-                <BsClock className="text-yellow-400" />
-              </div>
-
-              <div>
-                <h3 className="font-semibold text-white">Sent Requests</h3>
-
-                <p className="text-xs text-zinc-500">Waiting for response</p>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              {requests.sent.map((request) => (
-                <div
-                  key={request._id}
-                  className="
-                  bg-zinc-800/50
-                  border border-zinc-700
-                  rounded-2xl
-                  p-4
-                  opacity-90
-                  hover:bg-zinc-800/80
-                  transition-all
-                "
-                >
-                  <div className="flex items-center gap-3">
-                    {/* Avatar */}
-                    <img
-                      src={request.receiverId.avatar}
-                      alt={request.receiverId.username}
-                      className="
-                      w-14 h-14 rounded-full
-                      object-cover
-                      ring-2 ring-zinc-700
-                    "
-                    />
-
-                    {/* Info */}
-                    <div className="flex-1 min-w-0">
-                      <h4 className="font-semibold truncate">
-                        {request.receiverId.username}
-                      </h4>
-
-                      <p className="text-sm text-zinc-400 mt-1">
-                        Request pending...
-                      </p>
-                    </div>
-
-                    {/* Pending Badge */}
-                    <div
-                      className="
-                      bg-yellow-500/10
-                      text-yellow-400
-                      px-3 py-1.5
-                      rounded-full
-                      text-xs font-medium
-                      border border-yellow-500/20
-                    "
-                    >
-                      Pending
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* EMPTY STATE */}
         {requests.received.length === 0 && requests.sent.length === 0 && (
           <div
-            className="
-            flex flex-col items-center justify-center
-            text-center
-            py-20
-          "
+            key="empty-state"
+            className="flex flex-col items-center justify-center text-center py-20"
           >
-            <div
-              className="
-              bg-zinc-800
-              p-5
-              rounded-3xl
-              mb-4
-            "
-            >
+            <div className="bg-zinc-800 p-5 rounded-3xl mb-4">
               <BsPersonAdd className="text-5xl text-zinc-600" />
             </div>
-
             <h3 className="text-lg font-semibold text-zinc-300">
               No Friend Requests
             </h3>
-
             <p className="text-sm text-zinc-500 mt-2 max-w-xs">
               When someone sends you a request, it will appear here.
             </p>
