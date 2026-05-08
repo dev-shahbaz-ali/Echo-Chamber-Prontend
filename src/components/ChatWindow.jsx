@@ -847,19 +847,21 @@ function ChatWindow({
     }
   };
 
+  // In ChatWindow.jsx - Update the performClearChat function
   const performClearChat = async () => {
     try {
       const token = localStorage.getItem("token");
-      const response = await fetch(
-        `${API_URL}/chats/${chat.id || chat._id}/clear`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-auth-token": token,
-          },
+      const chatId = chat.id || chat._id;
+
+      console.log("🗑️ Clearing chat:", chatId);
+
+      const response = await fetch(`${API_URL}/chats/${chatId}/clear`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-auth-token": token,
         },
-      );
+      });
 
       const data = await response.json();
 
@@ -868,10 +870,27 @@ function ChatWindow({
         return;
       }
 
+      // Clear messages from state
       setMessages([]);
       setShowChatMenu(false);
-      onChatCleared?.();
-      toast.success("Chat cleared");
+
+      // Call parent callback to refresh friends list
+      if (onChatCleared) {
+        onChatCleared();
+      }
+
+      toast.success("Chat cleared successfully");
+
+      // Optional: Send WebSocket notification that chat was cleared
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(
+          JSON.stringify({
+            type: "chat_cleared",
+            chatId: chatId,
+            userId: currentUserId,
+          }),
+        );
+      }
     } catch (error) {
       console.error("Error clearing chat:", error);
       toast.error("Failed to clear chat");
@@ -1552,15 +1571,19 @@ function ChatWindow({
           <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl">
             <div className="p-6">
               <h4 className="mb-2 text-lg font-semibold text-gray-800">
-                Clear chat?
+                Delete chat history?
               </h4>
+              <p className="text-sm text-gray-500">
+                This will remove the conversation from the server if the API
+                supports chat deletion.
+              </p>
             </div>
             <div className="bg-gray-50 px-6 py-4 space-y-2 flex flex-col">
               <button
                 onClick={performClearChat}
                 className="w-full rounded-lg bg-red-500 py-2 font-medium text-white transition-colors hover:bg-red-600"
               >
-                Clear chat
+                Delete chat
               </button>
               <button
                 onClick={() => setClearChatModal(false)}

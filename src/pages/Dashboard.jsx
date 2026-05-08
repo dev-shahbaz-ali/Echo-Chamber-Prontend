@@ -116,6 +116,13 @@ function Dashboard() {
               });
               break;
 
+            // In Dashboard.jsx WebSocket message handler, add this case:
+            case "chat_cleared":
+              console.log("Chat cleared by other user:", data);
+              // Refresh friends list to update last message
+              setFriendsRefreshKey((prev) => prev + 1);
+              break;
+
             default:
               console.log("Unhandled message type:", data.type);
           }
@@ -293,13 +300,14 @@ function Dashboard() {
 
       {/* Chat Area */}
       {selectedChat ? (
+        // In Dashboard.jsx - This is already there
         <ChatWindow
           chat={selectedChat}
           currentUser={user}
           onSendMessage={sendMessage}
           ws={ws}
           onBack={handleBackToList}
-          onChatCleared={() => setFriendsRefreshKey((prev) => prev + 1)}
+          onChatCleared={() => setFriendsRefreshKey((prev) => prev + 1)} // ✅ Already there
         />
       ) : (
         <div className="flex-1 flex items-center justify-center bg-[#efeae2]">
