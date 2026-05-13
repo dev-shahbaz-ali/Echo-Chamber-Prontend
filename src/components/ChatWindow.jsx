@@ -142,70 +142,77 @@ function ChatWindow({
     });
   }, []);
 
-  // Add this useEffect in ChatWindow.jsx right after the other useEffects
-  // Poll for new messages (since WebSockets don't work on Vercel)
-  useEffect(() => {
-    if (!activeChatId || !API_URL) return;
 
-    let pollInterval;
+useEffect(() => {
+  if (!activeChatId || !API_URL) return;
 
-  // Update your pollForNewMessages function in ChatWindow.jsx
-const pollForNewMessages = async () => {
-  try {
-    const token = localStorage.getItem("token");
-    const url = `${API_URL}/chats/${activeChatId}/messages?page=1&limit=50`;
+  let pollInterval;
+  let isPolling = false;
+
+  const pollForNewMessages = async () => {
+    if (isPolling) return;
+    isPolling = true;
     
-    console.log("🔄 Polling URL:", url);
-    
-    const response = await fetch(url, {
-      headers: { "x-auth-token": token },
-    });
+    try {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        isPolling = false;
+        return;
+      }
+      
+      const url = `${API_URL}/chats/${activeChatId}/messages?page=1&limit=50`;
+      
+      const response = await fetch(url, {
+        headers: { 
+          "x-auth-token": token,
+          "Content-Type": "application/json"
+        },
+      });
 
-    if (response.ok) {
-      const data = await response.json();
-      console.log("📦 Polling response data:", data);
-      
-      const newMessages = data.messages || [];
-      console.log(`📨 Received ${newMessages.length} messages from server`);
-      
-      // Log each message to see what's coming
-      newMessages.forEach(msg => {
-        console.log("Message:", {
-          id: msg.id,
-          text: msg.message,
-          senderId: msg.senderId || msg.sender_id,
-          createdAt: msg.createdAt || msg.created_at
+      if (response.ok) {
+        const data = await response.json();
+        const newMessages = data.messages || [];
+        
+        setMessages(prev => {
+          const currentIds = new Set(prev.map(m => m.id || m._id));
+          const uniqueNew = newMessages.filter(m => !currentIds.has(m.id || m._id));
+          
+          if (uniqueNew.length > 0) {
+            console.log(`✨ Polling found ${uniqueNew.length} new messages!`);
+            const sorted = [...newMessages].sort((a, b) => 
+              new Date(a.createdAt || a.created_at).getTime() - 
+              new Date(b.createdAt || b.created_at).getTime()
+            );
+            return sorted;
+          }
+          return prev;
         });
-      });
-      
-      setIsOtherUserTyping(!!data.isTyping);
-
-      setMessages((prev) => {
-        const prevIds = new Set(prev.map(m => m.id || m._id));
-        const uniqueNew = newMessages.filter(m => !prevIds.has(m.id || m._id));
         
-        if (uniqueNew.length > 0) {
-          console.log(`✨ Adding ${uniqueNew.length} new messages`);
+        if (shouldAutoScrollRef.current) {
+          setTimeout(() => scrollToBottom("smooth"), 100);
         }
-        
-        const merged = mergeMessages(prev, newMessages);
-        return merged;
-      });
-    } else {
-      console.error("Polling failed with status:", response.status);
+      }
+    } catch (error) {
+      console.error("Polling error:", error);
+    } finally {
+      isPolling = false;
     }
-  } catch (error) {
-    console.error("Polling error:", error);
-  }
-};
+  };
 
-    // Poll every 3 seconds
-    pollInterval = setInterval(pollForNewMessages, 3000);
+  // Store the polling function in ref so it can be called from handleSendMessage
+  triggerPollingRef.current = pollForNewMessages;
+  
+  // Poll immediately when chat opens
+  pollForNewMessages();
+  
+  // Then poll every 3 seconds
+  pollInterval = setInterval(pollForNewMessages, 3000);
 
-    return () => {
-      if (pollInterval) clearInterval(pollInterval);
-    };
-  }, [activeChatId, API_URL, scrollToBottom, mergeMessages]);
+  return () => {
+    if (pollInterval) clearInterval(pollInterval);
+    triggerPollingRef.current = null;
+  };
+}, [activeChatId, API_URL]); // Remove mergeMessages and scrollToBottom from dependencies
 
   const getMessageCreatedAt = (message) =>
     message?.createdAt || message?.created_at || message?.timestamp || null;
@@ -679,134 +686,149 @@ const pollForNewMessages = async () => {
   };
 
   // In ChatWindow.jsx - REPLACE the handleSendMessage function
-  const handleSendMessage = async () => {
-    if (!inputMessage.trim() && !editingMessage) return;
+const handleSendMessage = async () => {
+  if (!inputMessage.trim() && !editingMessage) return;
 
-    const clientMessageId = crypto.randomUUID();
-    const messageText = inputMessage;
-    const currentReplyToId = replyingTo?.id || replyingTo?._id;
-    const chatId = chat.id || chat._id;
+  const clientMessageId = crypto.randomUUID();
+  const messageText = inputMessage;
+  const currentReplyToId = replyingTo?.id || replyingTo?._id;
+  const chatId = chat.id || chat._id;
 
-    setReplyTo(null);
+  setReplyTo(null);
 
-    // Handle editing
-    if (editingMessage) {
-      try {
-        const token = localStorage.getItem("token");
-        const response = await fetch(
-          `${API_URL}/chats/${chatId}/messages/${editingMessage.id || editingMessage._id}`,
-          {
-            method: "PUT",
-            headers: {
-              "Content-Type": "application/json",
-              "x-auth-token": token,
-            },
-            body: JSON.stringify({ message: messageText }),
-          },
-        );
-
-        if (response.ok) {
-          toast.success("Message edited");
-          setEditingMessage(null);
-          setInputMessage("");
-          fetchMessages(1, false);
-        } else {
-          toast.error("Failed to edit message");
-        }
-      } catch (error) {
-        console.error("Error editing message:", error);
-        toast.error("Failed to edit message");
-      }
-      return;
-    }
-
-    // Clear input immediately for better UX
-    setInputMessage("");
-
-    // Create optimistic message
-    const tempMessage = {
-      _id: `temp-${clientMessageId}`,
-      clientMessageId,
-      message: messageText,
-      senderId: currentUserId,
-      receiverId: otherUser.id || otherUser._id,
-      chatId: chatId,
-      createdAt: new Date().toISOString(),
-      isRead: false,
-      isDelivered: true,
-      messageType: "text",
-      status: "sending",
-      replyTo: currentReplyToId,
-    };
-
-    // Add optimistic message to UI
-    setMessages((prev) => [...prev, tempMessage]);
-    scrollToBottom();
-
-    // ONLY USE REST API - WebSocket is optional for production
+  // Handle editing
+  if (editingMessage) {
     try {
       const token = localStorage.getItem("token");
-      console.log(
-        "📤 Sending message via REST API to:",
-        `${API_URL}/chats/${chatId}/messages`,
-      );
-
-      const response = await fetch(`${API_URL}/chats/${chatId}/messages`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-auth-token": token,
+      const response = await fetch(
+        `${API_URL}/chats/${chatId}/messages/${editingMessage.id || editingMessage._id}`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            "x-auth-token": token,
+          },
+          body: JSON.stringify({ message: messageText }),
         },
-        body: JSON.stringify({
-          message: messageText,
-          messageType: "text",
-          replyTo: currentReplyToId,
-          clientMessageId: clientMessageId,
-        }),
-      });
+      );
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("API Error:", response.status, errorText);
-        throw new Error(`Failed to send message: ${response.status}`);
+      if (response.ok) {
+        toast.success("Message edited");
+        setEditingMessage(null);
+        setInputMessage("");
+        fetchMessages(1, false);
+      } else {
+        toast.error("Failed to edit message");
       }
-
-      const result = await response.json();
-      console.log("✅ Message saved:", result);
-
-      // Replace temp message with real message
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.clientMessageId === clientMessageId
-            ? { ...result, status: "sent", _id: result.id || result._id }
-            : msg,
-        ),
-      );
-
-      // Mark as delivered/read
-      setTimeout(() => {
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.clientMessageId === clientMessageId
-              ? { ...msg, isDelivered: true }
-              : msg,
-          ),
-        );
-      }, 500);
     } catch (error) {
-      console.error("❌ Failed to send message:", error);
+      console.error("Error editing message:", error);
+      toast.error("Failed to edit message");
+    }
+    return;
+  }
 
-      // Mark message as failed
+  // Clear input immediately for better UX
+  setInputMessage("");
+
+  // Create optimistic message
+  const tempMessage = {
+    _id: `temp-${clientMessageId}`,
+    clientMessageId,
+    message: messageText,
+    senderId: currentUserId,
+    receiverId: otherUser.id || otherUser._id,
+    chatId: chatId,
+    createdAt: new Date().toISOString(),
+    isRead: false,
+    isDelivered: true,
+    messageType: "text",
+    status: "sending",
+    replyTo: currentReplyToId,
+  };
+
+  // Add optimistic message to UI
+  setMessages((prev) => [...prev, tempMessage]);
+  scrollToBottom();
+
+  // ONLY USE REST API - WebSocket is optional for production
+  try {
+    const token = localStorage.getItem("token");
+    console.log(
+      "📤 Sending message via REST API to:",
+      `${API_URL}/chats/${chatId}/messages`,
+    );
+
+    const response = await fetch(`${API_URL}/chats/${chatId}/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-auth-token": token,
+      },
+      body: JSON.stringify({
+        message: messageText,
+        messageType: "text",
+        replyTo: currentReplyToId,
+        clientMessageId: clientMessageId,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("API Error:", response.status, errorText);
+      throw new Error(`Failed to send message: ${response.status}`);
+    }
+
+    const result = await response.json();
+    console.log("✅ Message saved:", result);
+
+    // Replace temp message with real message
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.clientMessageId === clientMessageId
+          ? { ...result, status: "sent", _id: result.id || result._id }
+          : msg,
+      ),
+    );
+
+    // ✅ FORCE IMMEDIATE POLLING to get the message on the receiving end
+    // This ensures the message appears for both users
+    setTimeout(() => {
+      // Trigger the polling function if available
+      if (triggerPollingRef && triggerPollingRef.current) {
+        console.log("🔄 Triggering immediate polling after send");
+        triggerPollingRef.current();
+      }
+      
+      // Also force fetch messages directly
+      fetchMessages(1, false);
+    }, 500);
+
+    // Mark as delivered/read
+    setTimeout(() => {
       setMessages((prev) =>
         prev.map((msg) =>
           msg.clientMessageId === clientMessageId
-            ? { ...msg, status: "failed" }
+            ? { ...msg, isDelivered: true }
             : msg,
         ),
       );
-      toast.error("Failed to send message. Check console for details.");
-    }
+    }, 1000);
+    
+  } catch (error) {
+    console.error("❌ Failed to send message:", error);
+
+    // Mark message as failed
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.clientMessageId === clientMessageId
+          ? { ...msg, status: "failed" }
+          : msg,
+      ),
+    );
+    toast.error("Failed to send message. Check console for details.");
+  }
   };
+  const triggerPollingRef = useRef(null);
 
   // Delete message
   const performDelete = async (forEveryone) => {
