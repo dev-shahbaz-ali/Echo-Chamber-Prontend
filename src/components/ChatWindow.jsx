@@ -113,7 +113,8 @@ function ChatWindow({
 
     return next.sort(
       (a, b) =>
-        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+        new Date(a.createdAt || a.created_at).getTime() -
+        new Date(b.createdAt || b.created_at).getTime(),
     );
   };
 

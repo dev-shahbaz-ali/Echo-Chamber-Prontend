@@ -49,26 +49,43 @@ function ChatInterface({ user, onLogout }) {
   }, [API_URL]);
 
   const fetchMessages = useCallback(
-    async (otherId) => {
+    async (chatId) => {
+      if (!chatId) return;
       try {
-        // Note: The chatController expects a chatId, but if you only have otherId,
-        // you should find the chat in the conversations list first.
-        const chat = conversations.find((c) => c.other_id === otherId);
-        if (!chat) return;
-
         const token = localStorage.getItem("token");
-        const response = await fetch(`${API_URL}/chats/${chat.id}/messages`, {
-          headers: { "x-auth-token": token },
-        });
+        const response = await fetch(
+          `${API_URL}/chats/${chatId}/messages?page=1&limit=50`,
+          {
+            headers: { "x-auth-token": token },
+          },
+        );
         if (!response.ok) throw new Error("Failed to fetch messages");
         const data = await response.json();
-        setMessages(data.messages || []);
+
+        // میسجز کو تاریخ کے حساب سے ترتیب دیں (ASC order for display)
+        const sortedMessages = (data.messages || []).sort(
+          (a, b) =>
+            new Date(a.createdAt || a.created_at).getTime() -
+            new Date(b.createdAt || b.created_at).getTime(),
+        );
+        setMessages(sortedMessages);
       } catch (error) {
         console.error("Error fetching messages:", error);
       }
     },
-    [API_URL, conversations],
+    [API_URL],
   );
+
+  // جب کوئی چیٹ سلیکٹ ہو تو ہر 3 سیکنڈ بعد نئے میسجز چیک کریں
+  useEffect(() => {
+    if (!selectedChat?.chatId) return;
+
+    const interval = setInterval(() => {
+      fetchMessages(selectedChat.chatId);
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [fetchMessages, selectedChat?.chatId]);
 
   const searchUsers = useCallback(
     async (query) => {
@@ -102,12 +119,39 @@ function ChatInterface({ user, onLogout }) {
     return () => clearInterval(interval);
   }, [fetchConversations]);
 
-  // Define missing sendMessage function
   const sendMessage = async () => {
-    if (!inputMessage.trim() || !selectedChat) return;
-    // Implementation should ideally be handled by a dedicated ChatWindow component
-    // for complex state, but here is a simple version:
-    toast.error("Please use the ChatWindow to send messages");
+    if (!inputMessage.trim() || !selectedChat?.chatId) return;
+
+    const messageText = inputMessage;
+    setInputMessage(""); // ان پٹ کو فوراً خالی کریں
+
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(
+        `${API_URL}/chats/${selectedChat.chatId}/messages`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-auth-token": token,
+          },
+          body: JSON.stringify({
+            message: messageText,
+            messageType: "text",
+          }),
+        },
+      );
+
+      if (!response.ok) throw new Error("Failed to send message");
+
+      const newMessage = await response.json();
+      setMessages((prev) => [...prev, newMessage]);
+      fetchConversations(); // سائیڈ بار کو اپ ڈیٹ کریں
+    } catch (error) {
+      console.error("Error sending message:", error);
+      toast.error("Failed to send message");
+      setInputMessage(messageText); // ایرر کی صورت میں میسج واپس لکھ دیں
+    }
   };
 
   const handleNewMessage = (message) => {
@@ -462,7 +506,12 @@ function ChatInterface({ user, onLogout }) {
                     setInputMessage(e.target.value);
                     handleTyping(e.target.value.length > 0);
                   }}
-                  onKeyDown={(e) => e.key === "Enter" && e.preventDefault()} // Prevent default form submission
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      sendMessage();
+                    }
+                  }}
                   placeholder="Type a message"
                   className="flex-1 rounded-full border border-black/5 bg-white px-4 py-3 text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-[#25d366] focus:ring-2 focus:ring-[#25d366]/15"
                 />

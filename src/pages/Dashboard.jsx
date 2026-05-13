@@ -17,150 +17,14 @@ function Dashboard() {
   const [selectedChat, setSelectedChat] = useState(null);
   const [activeTab, setActiveTab] = useState("friends");
   const [showSidebar, setShowSidebar] = useState(true);
-  const [ws, setWs] = useState(null);
   const [notificationCount, setNotificationCount] = useState(0);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [friendsRefreshKey, setFriendsRefreshKey] = useState(0);
-  const [onlineUsers, setOnlineUsers] = useState(new Set());
-
-  const wsRef = useRef(null);
-  const reconnectTimeoutRef = useRef(null);
 
   // ✅ ADD THIS INSTEAD
   const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
-  // Initialize WebSocket with better handling
-  useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (!token) return;
-
-    let isClosedByCleanup = false;
-
-    const connectWebSocket = () => {
-      if (isClosedByCleanup) return;
-
-      const websocket = new WebSocket("ws://localhost:5000");
-      wsRef.current = websocket;
-
-      websocket.onopen = () => {
-        console.log("✅ WebSocket connected");
-        // Authenticate
-        websocket.send(
-          JSON.stringify({
-            type: "auth",
-            token,
-          }),
-        );
-      };
-
-      websocket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          console.log("📨 WebSocket message:", data.type, data);
-
-          switch (data.type) {
-            case "auth_success":
-              console.log("✅ WebSocket authenticated");
-              break;
-
-            case "friend_request_received":
-              setNotificationCount((prev) => prev + 1);
-              toast.info("New friend request received!");
-              break;
-
-            case "friend_request_accepted":
-              toast.success("Friend request accepted!");
-              setFriendsRefreshKey((prev) => prev + 1);
-              setActiveTab("friends");
-              break;
-
-            case "new_message":
-            case "receive_message":
-              // Handle incoming messages
-              if (data.chatId && data.message) {
-                // Update the selected chat if it's the current one
-                if (
-                  selectedChat &&
-                  String(selectedChat.id || selectedChat._id) ===
-                    String(data.chatId)
-                ) {
-                  // The ChatWindow component will handle this via its own WebSocket listener
-                  // We just need to trigger a refresh of friends list to update last message
-                  setFriendsRefreshKey((prev) => prev + 1);
-                } else {
-                  // Notify about new message in another chat
-                  toast.success(
-                    `New message from ${data.message.senderName || "Someone"}`,
-                  );
-                  setFriendsRefreshKey((prev) => prev + 1);
-                }
-              }
-              break;
-
-            case "message_sent":
-              console.log("✅ Message sent confirmation:", data);
-              break;
-
-            case "user_typing":
-              // Typing indicator handled by ChatWindow
-              break;
-
-            case "friend_status_change":
-              setOnlineUsers((prev) => {
-                const newSet = new Set(prev);
-                if (data.isOnline) {
-                  newSet.add(data.userId);
-                } else {
-                  newSet.delete(data.userId);
-                }
-                return newSet;
-              });
-              break;
-
-            // In Dashboard.jsx WebSocket message handler, add this case:
-            case "chat_cleared":
-              console.log("Chat cleared by other user:", data);
-              // Refresh friends list to update last message
-              setFriendsRefreshKey((prev) => prev + 1);
-              break;
-
-            default:
-              console.log("Unhandled message type:", data.type);
-          }
-        } catch (error) {
-          console.error("Error parsing WebSocket message:", error);
-        }
-      };
-
-      websocket.onerror = (error) => {
-        console.error("WebSocket error:", error);
-      };
-
-      websocket.onclose = () => {
-        console.log("WebSocket disconnected");
-        if (!isClosedByCleanup && reconnectTimeoutRef.current === null) {
-          reconnectTimeoutRef.current = setTimeout(() => {
-            reconnectTimeoutRef.current = null;
-            connectWebSocket();
-          }, 3000);
-        }
-      };
-
-      setWs(websocket);
-    };
-
-    connectWebSocket();
-
-    return () => {
-      isClosedByCleanup = true;
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.close();
-      }
-    };
-  }, []);
+  // WebSocket logic removed for Vercel/Polling stability
 
   // Handle responsive sidebar
   useEffect(() => {
@@ -306,7 +170,6 @@ function Dashboard() {
           chat={selectedChat}
           currentUser={user}
           onSendMessage={sendMessage}
-          ws={ws}
           onBack={handleBackToList}
           onChatCleared={() => setFriendsRefreshKey((prev) => prev + 1)} // ✅ Already there
         />
