@@ -21,8 +21,6 @@ function ChatWindow({
   chat,
   currentUser,
   onSendMessage,
-  onTyping,
-  ws,
   onBack,
   onChatCleared,
 }) {
@@ -31,7 +29,6 @@ function ChatWindow({
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
-  const [otherUserTyping, setOtherUserTyping] = useState(false);
   const [initialLoad, setInitialLoad] = useState(true);
   const [contextMenu, setContextMenu] = useState(null);
   const [deleteModal, setDeleteModal] = useState(null);
@@ -118,6 +115,25 @@ function ChatWindow({
         new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
     );
   };
+
+  // --- MOVED DEFINITIONS UP TO FIX INITIALIZATION ERROR ---
+  const isNearBottom = useCallback(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return true;
+    const threshold = 100;
+    return (
+      container.scrollHeight - container.scrollTop - container.clientHeight <
+      threshold
+    );
+  }, []);
+
+  const scrollToBottom = useCallback((behavior = "smooth") => {
+    if (!shouldAutoScrollRef.current) return;
+    requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior });
+    });
+  }, []);
+
   // Add this useEffect in ChatWindow.jsx right after the other useEffects
   // Poll for new messages (since WebSockets don't work on Vercel)
   useEffect(() => {
@@ -182,146 +198,6 @@ function ChatWindow({
   const getMessageCreatedAt = (message) =>
     message?.createdAt || message?.created_at || message?.timestamp || null;
 
-  const waitForWebSocketOpen = useCallback(
-    (timeoutMs = 3000) =>
-      new Promise((resolve) => {
-        if (!ws) {
-          resolve(false);
-          return;
-        }
-
-        if (ws.readyState === WebSocket.OPEN) {
-          resolve(true);
-          return;
-        }
-
-        const startedAt = Date.now();
-        const timer = setInterval(() => {
-          if (ws.readyState === WebSocket.OPEN) {
-            clearInterval(timer);
-            resolve(true);
-            return;
-          }
-
-          if (Date.now() - startedAt >= timeoutMs) {
-            clearInterval(timer);
-            resolve(false);
-          }
-        }, 100);
-      }),
-    [ws],
-  );
-
-  const sendRealtimeMessage = useCallback(
-    async (payload) => {
-      console.log("📤 Attempting to send via WebSocket:", payload.type);
-      console.log("  - WebSocket state:", ws?.readyState);
-
-      // Check WebSocket connection
-      if (!ws) {
-        console.log("❌ No WebSocket connection available");
-        return false;
-      }
-
-      if (ws.readyState !== WebSocket.OPEN) {
-        console.log(
-          `❌ WebSocket not open (state: ${ws.readyState}), falling back to REST`,
-        );
-        return false;
-      }
-
-      try {
-        const messageToSend = {
-          type: payload.type,
-          chatId: String(chat?.id || chat?._id),
-          message: payload.message,
-          messageType: payload.messageType || "text",
-          senderId: currentUserId,
-          clientMessageId: payload.clientMessageId,
-        };
-
-        // Add optional fields
-        if (payload.replyTo) messageToSend.replyTo = payload.replyTo;
-        if (payload.voiceUrl) messageToSend.voiceUrl = payload.voiceUrl;
-        if (payload.voiceDuration)
-          messageToSend.voiceDuration = payload.voiceDuration;
-
-        console.log("📤 Sending WebSocket message:", messageToSend);
-        ws.send(JSON.stringify(messageToSend));
-        console.log("✅ Message sent via WebSocket");
-        return true;
-      } catch (error) {
-        console.error("❌ Error sending via WebSocket:", error);
-        return false;
-      }
-    },
-    [ws, chat?.id, chat?._id, currentUserId],
-  );
-  // Add this right after your useRef declarations
-  useEffect(() => {
-    console.log("🔍 ChatWindow Debug Info:");
-    console.log("  - WebSocket exists:", !!ws);
-    console.log("  - WebSocket readyState:", ws?.readyState);
-    console.log(
-      "  - WebSocket OPEN status:",
-      ws?.readyState === WebSocket.OPEN,
-    );
-    console.log("  - Chat ID:", chat?.id || chat?._id);
-    console.log("  - Current User ID:", currentUserId);
-    console.log("  - Other User:", otherUser?.username);
-  }, [ws, chat, currentUserId]);
-
-  // Add near other useEffects
-  useEffect(() => {
-    if (!ws) {
-      console.log("⚠️ WebSocket not available");
-      return;
-    }
-
-    console.log(
-      "WebSocket status:",
-      ws.readyState === WebSocket.CONNECTING
-        ? "Connecting"
-        : ws.readyState === WebSocket.OPEN
-          ? "Open ✅"
-          : ws.readyState === WebSocket.CLOSING
-            ? "Closing"
-            : ws.readyState === WebSocket.CLOSED
-              ? "Closed"
-              : "Unknown",
-    );
-
-    const handleOpen = () => console.log("✅ WebSocket opened for chat");
-    const handleClose = () => console.log("❌ WebSocket closed for chat");
-
-    ws.addEventListener("open", handleOpen);
-    ws.addEventListener("close", handleClose);
-
-    return () => {
-      ws.removeEventListener("open", handleOpen);
-      ws.removeEventListener("close", handleClose);
-    };
-  }, [ws]);
-
-  // Check if user is near bottom
-  const isNearBottom = useCallback(() => {
-    const container = messagesContainerRef.current;
-    if (!container) return true;
-    const threshold = 100;
-    return (
-      container.scrollHeight - container.scrollTop - container.clientHeight <
-      threshold
-    );
-  }, []);
-
-  // Scroll to bottom
-  const scrollToBottom = useCallback((behavior = "smooth") => {
-    if (!shouldAutoScrollRef.current) return;
-    requestAnimationFrame(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior });
-    });
-  }, []);
-
   const scrollToMessage = useCallback((messageId) => {
     requestAnimationFrame(() => {
       const node = messageRefs.current.get(messageId);
@@ -335,164 +211,6 @@ function ChatWindow({
       scrollToMessage(messageId);
     },
     [scrollToMessage],
-  );
-  // Add this effect in ChatWindow.jsx right after the existing WebSocket effect
-
-  // Handle WebSocket messages for this specific chat
-  useEffect(() => {
-    if (!ws) return;
-
-    const handleWebSocketMessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-
-        // Only process messages for this chat
-        if (
-          data.chatId &&
-          String(data.chatId) !== String(chat?.id || chat?._id)
-        ) {
-          return;
-        }
-
-        switch (data.type) {
-          case "new_message":
-          case "receive_message":
-            console.log("📨 Received message via WS:", data);
-
-            if (data.message) {
-              // Add the new message to state
-              setMessages((prev) => {
-                // Check if message already exists
-                const exists = prev.some(
-                  (m) =>
-                    (m.id || m._id) === (data.message.id || data.message._id),
-                );
-                if (exists) return prev;
-
-                const newMessages = [...prev, data.message];
-                // Sort by timestamp
-                return newMessages.sort(
-                  (a, b) =>
-                    new Date(a.createdAt).getTime() -
-                    new Date(b.createdAt).getTime(),
-                );
-              });
-
-              // Auto-scroll if near bottom
-              if (shouldAutoScrollRef.current) {
-                setTimeout(() => scrollToBottom(), 100);
-              }
-
-              // Mark as read if it's from other user
-              const senderId =
-                data.message.sender_id ||
-                data.message.senderId?.id ||
-                data.message.senderId;
-              if (String(senderId) !== String(currentUserId)) {
-                markMessagesAsRead([data.message.id || data.message._id]);
-              }
-            }
-            break;
-
-          case "message_sent":
-            console.log("✅ Message sent confirmation:", data);
-            // Update the message status
-            if (data.message) {
-              setMessages((prev) =>
-                prev.map((msg) =>
-                  msg.clientMessageId === data.message.clientMessageId ||
-                  (msg.id || msg._id) === (data.message.id || data.message._id)
-                    ? { ...data.message, status: "sent" }
-                    : msg,
-                ),
-              );
-            }
-            break;
-
-          case "user_typing":
-            if (data.isTyping) {
-              setOtherUserTyping(true);
-              // Auto-hide typing indicator after 2 seconds of no updates
-              const timeoutId = setTimeout(
-                () => setOtherUserTyping(false),
-                2000,
-              );
-              return () => clearTimeout(timeoutId);
-            } else {
-              setOtherUserTyping(false);
-            }
-            break;
-
-          case "message_edited":
-            if (data.message) {
-              setMessages((prev) =>
-                prev.map((msg) =>
-                  (msg.id || msg._id) === (data.message.id || data.message._id)
-                    ? { ...data.message, isEdited: true }
-                    : msg,
-                ),
-              );
-            }
-            break;
-
-          case "message_deleted":
-            if (data.messageId) {
-              setMessages((prev) =>
-                prev.map((msg) =>
-                  (msg.id || msg._id) === data.messageId
-                    ? {
-                        ...msg,
-                        isDeleted: true,
-                        message: "This message was deleted",
-                      }
-                    : msg,
-                ),
-              );
-            }
-            break;
-
-          default:
-            // Ignore other message types
-            break;
-        }
-      } catch (error) {
-        console.error("Error parsing WebSocket message:", error);
-      }
-    };
-
-    ws.addEventListener("message", handleWebSocketMessage);
-
-    return () => {
-      ws.removeEventListener("message", handleWebSocketMessage);
-    };
-  }, [ws, chat?.id, chat?._id, currentUserId, scrollToBottom]);
-
-  const loadMessageContext = useCallback(
-    async (messageId) => {
-      const chatId = chat.id || chat._id;
-      try {
-        const token = localStorage.getItem("token");
-        const response = await fetch(
-          `${API_URL}/chats/${chatId}/messages/${messageId}/context?limit=24`,
-          { headers: { "x-auth-token": token } },
-        );
-        const data = await response.json();
-
-        if (!response.ok) {
-          toast.error(data.error || "Unable to open message");
-          return;
-        }
-
-        setMessages(data.messages || []);
-        setHasMore(false);
-        setPage(1);
-        setTimeout(() => focusMessageById(messageId), 50);
-      } catch (error) {
-        console.error("Error loading message context:", error);
-        toast.error("Unable to open message");
-      }
-    },
-    [API_URL, chat?.id, chat?._id, focusMessageById],
   );
 
   const handleSearchResultClick = (result) => {
@@ -644,76 +362,6 @@ function ChatWindow({
       fetchMessages(1, false);
     }
   }, [chat?.id, chat?._id]);
-
-  // Handle WebSocket messages
-  useEffect(() => {
-    if (!ws) return;
-
-    const handleMessage = (event) => {
-      const data = JSON.parse(event.data);
-
-      const isIncomingMessage =
-        data.type === "receive_message" ||
-        data.type === "new_message" ||
-        data.type === "message_sent";
-
-      if (
-        isIncomingMessage &&
-        isSameChatId(data.chatId, chat?.id || chat?._id)
-      ) {
-        const incomingMessage = data.message || data;
-
-        setMessages((prev) => {
-          const newMessages = mergeMessages(prev, [incomingMessage]);
-          if (shouldAutoScrollRef.current) {
-            setTimeout(() => scrollToBottom(), 50);
-          }
-          return newMessages;
-        });
-
-        markMessagesAsRead([incomingMessage.id || incomingMessage._id]);
-      }
-
-      if (
-        data.type === "user_typing" &&
-        isSameChatId(data.chatId, chat?.id || chat?._id)
-      ) {
-        setOtherUserTyping(data.isTyping);
-        setTimeout(() => setOtherUserTyping(false), 2000);
-      }
-
-      if (data.type === "message_sent" || data.type === "message_edited") {
-        setMessages((prev) => {
-          return mergeMessages(prev, [data.message]);
-        });
-      }
-
-      if (
-        data.type === "message_deleted" &&
-        isSameChatId(data.chatId, chat?.id || chat?._id)
-      ) {
-        if (data.message) {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              (msg.id || msg._id) === data.messageId
-                ? { ...data.message, status: "deleted" }
-                : msg,
-            ),
-          );
-        }
-      }
-
-      if (
-        data.type === "delete_message_error" &&
-        isSameChatId(data.chatId, chat?.id || chat?._id)
-      ) {
-        toast.error(data.error || "Failed to delete message");
-      }
-    };
-
-    ws.addEventListener("message", handleMessage);
-    return () => ws.removeEventListener("message", handleMessage);
-  }, [ws, chat, scrollToBottom]);
 
   useEffect(() => {
     if (!showSearchBar || !searchQuery.trim()) {
@@ -968,17 +616,6 @@ function ChatWindow({
       }
 
       toast.success("Chat cleared successfully");
-
-      // Optional: Send WebSocket notification that chat was cleared
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(
-          JSON.stringify({
-            type: "chat_cleared",
-            chatId: chatId,
-            userId: currentUserId,
-          }),
-        );
-      }
     } catch (error) {
       console.error("Error clearing chat:", error);
       toast.error("Failed to clear chat");
@@ -1000,16 +637,6 @@ function ChatWindow({
     if (unreadMessages.length === 0) return;
 
     const ids = messageIds || unreadMessages.map((m) => m.id || m._id);
-
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(
-        JSON.stringify({
-          type: "mark_read",
-          messageIds: ids,
-          chatId: chat.id || chat._id,
-        }),
-      );
-    }
 
     setMessages((prev) =>
       prev.map((msg) =>
@@ -1205,30 +832,6 @@ function ChatWindow({
   const handleTyping = (e) => {
     const value = e.target.value;
     setInputMessage(value);
-
-    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(
-        JSON.stringify({
-          type: "typing",
-          chatId: chat.id || chat._id,
-          isTyping: value.length > 0,
-        }),
-      );
-    }
-
-    typingTimeoutRef.current = setTimeout(() => {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(
-          JSON.stringify({
-            type: "typing",
-            chatId: chat.id || chat._id,
-            isTyping: false,
-          }),
-        );
-      }
-    }, 1000);
   };
 
   // Format time
@@ -1279,13 +882,7 @@ function ChatWindow({
               {otherUser.username}
             </h3>
             <p className="text-xs text-gray-500">
-              {otherUserTyping ? (
-                <span className="text-green-500">typing...</span>
-              ) : otherUser.isOnline ? (
-                <span className="text-green-500">online</span>
-              ) : (
-                "offline"
-              )}
+              {otherUser.isOnline ? <span className="text-green-500">online</span> : "offline"}
             </p>
           </div>
         </div>
@@ -1544,24 +1141,6 @@ function ChatWindow({
             </div>
           );
         })}
-
-        {otherUserTyping && (
-          <div className="flex justify-start">
-            <div className="bg-white rounded-lg rounded-tl-none px-4 py-2 shadow-sm">
-              <div className="flex space-x-1">
-                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" />
-                <div
-                  className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                  style={{ animationDelay: "0.2s" }}
-                />
-                <div
-                  className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"
-                  style={{ animationDelay: "0.4s" }}
-                />
-              </div>
-            </div>
-          </div>
-        )}
 
         <div ref={messagesEndRef} />
       </div>
