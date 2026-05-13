@@ -18,7 +18,6 @@ function ChatInterface({ user, onLogout }) {
   const [inputMessage, setInputMessage] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
-  const [ws, setWs] = useState(null);
   const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [typingUsers, setTypingUsers] = useState(new Set());
   const [isTyping, setIsTyping] = useState(false);
@@ -77,55 +76,7 @@ function ChatInterface({ user, onLogout }) {
   );
 
   useEffect(() => {
-    const token = localStorage.getItem("echo_chamber_token");
-    if (!token) return;
-
-    // Connect to the same port as the backend (5000) - this is correct
-    const websocket = new WebSocket(`ws://localhost:5000`);
-
-    websocket.onopen = () => {
-      websocket.send(
-        JSON.stringify({
-          type: "auth",
-          token,
-        }),
-      );
-    };
-
-    websocket.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-
-      switch (data.type) {
-        case "auth_success":
-          fetchConversations();
-          break;
-        case "receive_message":
-          handleNewMessage(data.message);
-          break;
-        case "user_typing":
-          handleTypingIndicator(data);
-          break;
-        case "user_status":
-          handleUserStatus(data);
-          break;
-        case "message_sent":
-          updateMessageStatus(data.messageId, data.status);
-          break;
-        case "read_receipt":
-          markMessagesAsRead(data.messageIds);
-          break;
-      }
-    };
-
-    websocket.onclose = () => {
-      console.log("WebSocket disconnected");
-    };
-
-    setWs(websocket);
-
-    return () => {
-      websocket.close();
-    };
+    fetchConversations(); // Still fetch conversations on mount
   }, [fetchConversations]);
 
   const handleNewMessage = (message) => {
@@ -149,17 +100,7 @@ function ChatInterface({ user, onLogout }) {
     }
   };
 
-  const markAsRead = (messageIds) => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(
-        JSON.stringify({
-          type: "read_receipt",
-          messageIds,
-          senderId: selectedChat?.id,
-        }),
-      );
-    }
-  };
+  const markAsRead = (messageIds) => {};
 
   const updateMessageStatus = (messageId, status) => {
     setMessages((prev) =>
@@ -175,38 +116,9 @@ function ChatInterface({ user, onLogout }) {
     );
   };
 
-  const sendMessage = () => {
-    if (!inputMessage.trim() || !selectedChat || !ws) return;
-
-    ws.send(
-      JSON.stringify({
-        type: "message",
-        receiverId: selectedChat.id,
-        content: inputMessage,
-        messageType: "text",
-      }),
-    );
-
-    setInputMessage("");
-
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-      setIsTyping(false);
-    }
-  };
-
   const handleTyping = (isTypingNow) => {
-    if (!selectedChat || !ws) return;
-
     if (isTypingNow !== isTyping) {
       setIsTyping(isTypingNow);
-      ws.send(
-        JSON.stringify({
-          type: "typing",
-          receiverId: selectedChat.id,
-          isTyping: isTypingNow,
-        }),
-      );
     }
 
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
@@ -214,13 +126,6 @@ function ChatInterface({ user, onLogout }) {
     if (isTypingNow) {
       typingTimeoutRef.current = setTimeout(() => {
         setIsTyping(false);
-        ws.send(
-          JSON.stringify({
-            type: "typing",
-            receiverId: selectedChat.id,
-            isTyping: false,
-          }),
-        );
       }, 1000);
     }
   };
@@ -538,7 +443,7 @@ function ChatInterface({ user, onLogout }) {
                     setInputMessage(e.target.value);
                     handleTyping(e.target.value.length > 0);
                   }}
-                  onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+                  onKeyDown={(e) => e.key === "Enter" && e.preventDefault()} // Prevent default form submission
                   placeholder="Type a message"
                   className="flex-1 rounded-full border border-black/5 bg-white px-4 py-3 text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-[#25d366] focus:ring-2 focus:ring-[#25d366]/15"
                 />
