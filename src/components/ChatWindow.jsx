@@ -12,6 +12,7 @@ import {
   BsTrash,
   BsCopy,
   BsX,
+  BsWhatsapp,
 } from "react-icons/bs";
 import { format } from "date-fns";
 import VoiceRecorder from "./VoiceRecorder";
@@ -46,10 +47,9 @@ function ChatWindow({
   const messagesContainerRef = useRef(null);
   const searchTimeoutRef = useRef(null);
   const messageRefs = useRef(new Map());
-  const typingTimeoutRef = useRef(null);
   const shouldAutoScrollRef = useRef(true);
 
-  const API_URL = "/api";
+  const API_URL = window.location.origin + "/api";
   const currentUserId = currentUser?.id || currentUser?._id;
   const otherUser =
     chat?.otherParticipant ||
@@ -112,7 +112,7 @@ function ChatWindow({
 
     return next.sort(
       (a, b) =>
-        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+        new Date(getMessageCreatedAt(a)).getTime() - new Date(getMessageCreatedAt(b)).getTime(),
     );
   };
 
@@ -159,18 +159,7 @@ function ChatWindow({
 
           if (newMessages.length !== messages.length) {
             console.log("🔄 New messages detected via polling");
-            setMessages((prev) => {
-              // Merge messages without duplicates
-              const existingIds = new Set(prev.map((m) => m.id || m._id));
-              const uniqueNew = newMessages.filter(
-                (m) => !existingIds.has(m.id || m._id),
-              );
-              return [...prev, ...uniqueNew].sort(
-                (a, b) =>
-                  new Date(a.createdAt).getTime() -
-                  new Date(b.createdAt).getTime(),
-              );
-            });
+            setMessages((prev) => mergeMessages(prev, newMessages));
 
             // Scroll to bottom if new message received
             if (
@@ -196,7 +185,7 @@ function ChatWindow({
   }, [chat, messages.length, API_URL, scrollToBottom]);
 
   const getMessageCreatedAt = (message) =>
-    message?.createdAt || message?.created_at || message?.timestamp || null;
+    message?.createdAt || message?.created_at || message?.timestamp || new Date().toISOString();
 
   const scrollToMessage = useCallback((messageId) => {
     requestAnimationFrame(() => {
@@ -286,17 +275,7 @@ function ChatWindow({
 
         if (append) {
           setMessages((prev) => {
-            const existingIds = new Set(prev.map((m) => m.id || m._id));
-            const uniqueNew = newMessages.filter(
-              (m) => !existingIds.has(m.id || m._id),
-            );
-            const merged = [...uniqueNew, ...prev];
-            merged.sort(
-              (a, b) =>
-                new Date(a.createdAt).getTime() -
-                new Date(b.createdAt).getTime(),
-            );
-            return merged;
+            return mergeMessages(prev, newMessages);
           });
 
           setTimeout(() => {
@@ -314,7 +293,7 @@ function ChatWindow({
           }
         }
 
-        setHasMore(data.currentPage < data.totalPages);
+        setHasMore(data.totalPages ? data.currentPage < data.totalPages : newMessages.length === 50);
       } catch (error) {
         console.error("Error fetching messages:", error);
         setMessages([]); // Set empty array on error to show empty state
@@ -872,17 +851,27 @@ function ChatWindow({
           <button onClick={onBack} className="md:hidden text-gray-600">
             <BsArrowLeft size={20} />
           </button>
-          <img
-            src={otherUser.avatar}
-            alt={otherUser.username}
-            className="w-10 h-10 rounded-full object-cover"
-          />
+          {otherUser.avatar ? (
+            <img
+              src={otherUser.avatar}
+              alt={otherUser.username}
+              className="w-10 h-10 rounded-full object-cover shadow-sm"
+            />
+          ) : (
+            <div className="w-10 h-10 rounded-full bg-green-500 flex items-center justify-center text-white font-bold shadow-sm">
+              {otherUser.username?.charAt(0).toUpperCase()}
+            </div>
+          )}
           <div>
             <h3 className="font-semibold text-gray-800">
               {otherUser.username}
             </h3>
             <p className="text-xs text-gray-500">
-              {otherUser.isOnline ? <span className="text-green-500">online</span> : "offline"}
+              {otherUser.isOnline ? (
+                <span className="text-green-500">online</span>
+              ) : (
+                "offline"
+              )}
             </p>
           </div>
         </div>
