@@ -145,35 +145,37 @@ function ChatWindow({
   // Add this useEffect in ChatWindow.jsx right after the other useEffects
   // Poll for new messages (since WebSockets don't work on Vercel)
   useEffect(() => {
-    if (!activeChatId) return;
+    if (!activeChatId || !API_URL) return;
 
     let pollInterval;
 
     const pollForNewMessages = async () => {
       try {
         const token = localStorage.getItem("token");
-        const response = await fetch(
-          `${API_URL}/chats/${activeChatId}/messages?page=1&limit=50`,
-          {
-            headers: { "x-auth-token": token },
-          },
-        );
+        const url = `${API_URL}/chats/${activeChatId}/messages?page=1&limit=50`;
+        
+        const response = await fetch(url, {
+          headers: { "x-auth-token": token },
+        });
 
         if (response.ok) {
           const data = await response.json();
           const newMessages = data.messages || [];
-            setIsOtherUserTyping(data.isTyping || false);
+          
+          // Debug log check karne ke liye ke data aa raha hai ya nahi
+          console.log(`Polling ${activeChatId}: Received ${newMessages.length} messages. Typing: ${data.isTyping}`);
+          
+          setIsOtherUserTyping(!!data.isTyping);
 
-          // Always merge messages to update status (sending -> sent) and catch new ones
           setMessages((prev) => {
             const merged = mergeMessages(prev, newMessages);
-
-            // Only scroll if we actually got a brand new message from the other person
-            const hasNewIncoming = merged.length > prev.length;
-            if (hasNewIncoming && shouldAutoScrollRef.current) {
-              setTimeout(() => scrollToBottom(), 100);
+            
+            // Check if there are truly new messages (especially from other user)
+            if (merged.length > prev.length) {
+              if (shouldAutoScrollRef.current) {
+                setTimeout(() => scrollToBottom(), 100);
+              }
             }
-
             return merged;
           });
         }
@@ -188,7 +190,7 @@ function ChatWindow({
     return () => {
       if (pollInterval) clearInterval(pollInterval);
     };
-  }, [activeChatId, API_URL, scrollToBottom]);
+  }, [activeChatId, API_URL, scrollToBottom, mergeMessages]);
 
   const getMessageCreatedAt = (message) =>
     message?.createdAt || message?.created_at || message?.timestamp || null;
