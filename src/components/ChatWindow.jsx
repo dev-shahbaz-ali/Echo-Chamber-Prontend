@@ -149,40 +149,55 @@ function ChatWindow({
 
     let pollInterval;
 
-    const pollForNewMessages = async () => {
-      try {
-        const token = localStorage.getItem("token");
-        const url = `${API_URL}/chats/${activeChatId}/messages?page=1&limit=50`;
-        
-        const response = await fetch(url, {
-          headers: { "x-auth-token": token },
+  // Update your pollForNewMessages function in ChatWindow.jsx
+const pollForNewMessages = async () => {
+  try {
+    const token = localStorage.getItem("token");
+    const url = `${API_URL}/chats/${activeChatId}/messages?page=1&limit=50`;
+    
+    console.log("🔄 Polling URL:", url);
+    
+    const response = await fetch(url, {
+      headers: { "x-auth-token": token },
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      console.log("📦 Polling response data:", data);
+      
+      const newMessages = data.messages || [];
+      console.log(`📨 Received ${newMessages.length} messages from server`);
+      
+      // Log each message to see what's coming
+      newMessages.forEach(msg => {
+        console.log("Message:", {
+          id: msg.id,
+          text: msg.message,
+          senderId: msg.senderId || msg.sender_id,
+          createdAt: msg.createdAt || msg.created_at
         });
+      });
+      
+      setIsOtherUserTyping(!!data.isTyping);
 
-        if (response.ok) {
-          const data = await response.json();
-          const newMessages = data.messages || [];
-          
-          // Debug log check karne ke liye ke data aa raha hai ya nahi
-          console.log(`Polling ${activeChatId}: Received ${newMessages.length} messages. Typing: ${data.isTyping}`);
-          
-          setIsOtherUserTyping(!!data.isTyping);
-
-          setMessages((prev) => {
-            const merged = mergeMessages(prev, newMessages);
-            
-            // Check if there are truly new messages (especially from other user)
-            if (merged.length > prev.length) {
-              if (shouldAutoScrollRef.current) {
-                setTimeout(() => scrollToBottom(), 100);
-              }
-            }
-            return merged;
-          });
+      setMessages((prev) => {
+        const prevIds = new Set(prev.map(m => m.id || m._id));
+        const uniqueNew = newMessages.filter(m => !prevIds.has(m.id || m._id));
+        
+        if (uniqueNew.length > 0) {
+          console.log(`✨ Adding ${uniqueNew.length} new messages`);
         }
-      } catch (error) {
-        console.error("Polling error:", error);
-      }
-    };
+        
+        const merged = mergeMessages(prev, newMessages);
+        return merged;
+      });
+    } else {
+      console.error("Polling failed with status:", response.status);
+    }
+  } catch (error) {
+    console.error("Polling error:", error);
+  }
+};
 
     // Poll every 3 seconds
     pollInterval = setInterval(pollForNewMessages, 3000);
