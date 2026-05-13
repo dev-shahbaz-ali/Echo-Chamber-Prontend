@@ -108,18 +108,6 @@ function ChatInterface({ user, onLogout }) {
     return () => clearInterval(interval);
   }, [fetchConversations]);
 
-  // Poll for new messages when a chat is selected
-  useEffect(() => {
-    const chatId = selectedChat?.chatId || selectedChat?.id;
-    if (!chatId) return;
-
-    const interval = setInterval(() => {
-      fetchMessages(chatId);
-    }, 3000); // 3 seconds polling
-
-    return () => clearInterval(interval);
-  }, [selectedChat, fetchMessages]);
-
   const sendMessage = async () => {
     if (!inputMessage.trim() || !(selectedChat?.chatId || selectedChat?.id)) return;
 

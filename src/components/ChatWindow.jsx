@@ -42,6 +42,8 @@ function ChatWindow({
   const [activeSearchMessageId, setActiveSearchMessageId] = useState(null);
   const [replyingTo, setReplyTo] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null);
+  const [isOtherUserTyping, setIsOtherUserTyping] = useState(false);
+  const [localIsTyping, setLocalIsTyping] = useState(false);
 
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
@@ -52,6 +54,10 @@ function ChatWindow({
 
   const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
   const currentUserId = currentUser?.id || currentUser?._id;
+  
+  // Normalize Chat ID to ensure we always use the database ID for the conversation
+  const activeChatId = chat?.chatId || chat?.id || chat?._id;
+
   const otherUser =
     chat?.otherParticipant ||
     chat?.participants?.find(
@@ -139,17 +145,15 @@ function ChatWindow({
   // Add this useEffect in ChatWindow.jsx right after the other useEffects
   // Poll for new messages (since WebSockets don't work on Vercel)
   useEffect(() => {
-    if (!chat || (!chat.id && !chat._id)) return;
+    if (!activeChatId) return;
 
     let pollInterval;
-    let lastMessageCount = messages.length;
 
     const pollForNewMessages = async () => {
       try {
-        const chatId = chat.id || chat._id;
         const token = localStorage.getItem("token");
         const response = await fetch(
-          `${API_URL}/chats/${chatId}/messages?page=1&limit=50`,
+          `${API_URL}/chats/${activeChatId}/messages?page=1&limit=50`,
           {
             headers: { "x-auth-token": token },
           },
@@ -158,6 +162,7 @@ function ChatWindow({
         if (response.ok) {
           const data = await response.json();
           const newMessages = data.messages || [];
+            setIsOtherUserTyping(data.isTyping || false);
 
           // Always merge messages to update status (sending -> sent) and catch new ones
           setMessages((prev) => {
@@ -171,7 +176,6 @@ function ChatWindow({
 
             return merged;
           });
-          lastMessageCount = newMessages.length;
         }
       } catch (error) {
         console.error("Polling error:", error);
@@ -184,7 +188,7 @@ function ChatWindow({
     return () => {
       if (pollInterval) clearInterval(pollInterval);
     };
-  }, [chat?.id, chat?._id, API_URL, scrollToBottom]);
+  }, [activeChatId, API_URL, scrollToBottom]);
 
   const getMessageCreatedAt = (message) =>
     message?.createdAt || message?.created_at || message?.timestamp || null;
@@ -219,10 +223,8 @@ function ChatWindow({
   // In ChatWindow.jsx - Replace the fetchMessages function
   const fetchMessages = useCallback(
     async (pageNum = 1, append = false) => {
-      const chatId = chat?.id || chat?._id;
 
-      // Validate chatId
-      if (!chatId) {
+      if (!activeChatId) {
         console.error("Cannot fetch messages: chatId is undefined");
         setMessages([]);
         setLoading(false);
@@ -245,7 +247,7 @@ function ChatWindow({
           return;
         }
 
-        const url = `${API_URL}/chats/${chatId}/messages?page=${pageNum}&limit=50`;
+        const url = `${API_URL}/chats/${activeChatId}/messages?page=${pageNum}&limit=50`;
         console.log("📥 Fetching messages from:", url);
 
         const response = await fetch(url, {
@@ -313,7 +315,7 @@ function ChatWindow({
         setLoading(false);
       }
     },
-    [chat?.id, chat?._id, initialLoad, scrollToBottom, API_URL],
+    [activeChatId, initialLoad, scrollToBottom, API_URL],
   );
 
   // Load older messages when scrolling up
@@ -352,7 +354,30 @@ function ChatWindow({
       shouldAutoScrollRef.current = true;
       fetchMessages(1, false);
     }
-  }, [chat?.id, chat?._id]);
+  }, [activeChatId]);
+
+  // Effect to handle sending typing status to backend
+  useEffect(() => {
+    if (!activeChatId) return;
+
+    const sendTypingStatus = async (status) => {
+      try {
+        const token = localStorage.getItem("token");
+        await fetch(`${API_URL}/chats/${activeChatId}/typing`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-auth-token": token,
+          },
+          body: JSON.stringify({ isTyping: status }),
+        });
+      } catch (err) {
+        console.error("Error sending typing status:", err);
+      }
+    };
+
+    sendTypingStatus(localIsTyping);
+  }, [localIsTyping, activeChatId, API_URL]);
 
   useEffect(() => {
     if (!showSearchBar || !searchQuery.trim()) {
@@ -373,7 +398,7 @@ function ChatWindow({
         setSearchLoading(true);
         const token = localStorage.getItem("token");
         const response = await fetch(
-          `${API_URL}/chats/${chat.id || chat._id}/messages/search?q=${encodeURIComponent(trimmedQuery)}&limit=8`,
+          `${API_URL}/chats/${activeChatId}/messages/search?q=${encodeURIComponent(trimmedQuery)}&limit=8`,
           {
             headers: { "x-auth-token": token },
             signal: controller.signal,
@@ -402,7 +427,7 @@ function ChatWindow({
         clearTimeout(searchTimeoutRef.current);
       }
     };
-  }, [API_URL, chat?.id, chat?._id, searchQuery, showSearchBar]);
+  }, [API_URL, activeChatId, searchQuery, showSearchBar]);
 
   // Close context menu on click outside
   useEffect(() => {
@@ -823,6 +848,15 @@ function ChatWindow({
   const handleTyping = (e) => {
     const value = e.target.value;
     setInputMessage(value);
+
+    if (!localIsTyping && value.length > 0) {
+      setLocalIsTyping(true);
+    }
+
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => {
+      setLocalIsTyping(false);
+    }, 3000);
   };
 
   // Format time
@@ -873,7 +907,9 @@ function ChatWindow({
               {otherUser.username}
             </h3>
             <p className="text-xs text-gray-500">
-              {otherUser.isOnline ? (
+              {isOtherUserTyping ? (
+                <span className="text-green-500 animate-pulse italic">typing...</span>
+              ) : otherUser.isOnline ? (
                 <span className="text-green-500">online</span>
               ) : (
                 "offline"
