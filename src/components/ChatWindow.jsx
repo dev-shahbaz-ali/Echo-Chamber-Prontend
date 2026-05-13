@@ -15,6 +15,8 @@ import {
 } from "react-icons/bs";
 import { format } from "date-fns";
 import VoiceRecorder from "./VoiceRecorder";
+// Add this with other imports at the top of ChatWindow.jsx
+import socketService from "../services/socket";
 
 function ChatWindow({
   chat,
@@ -930,25 +932,59 @@ function ChatWindow({
     );
   };
 
-  // Keep THIS version (around line 155) - DELETE the other one
+  // In ChatWindow.jsx - Replace the handleSendMessage function
   const handleSendMessage = async () => {
-    if (!inputMessage.trim()) return;
+    if (!inputMessage.trim() && !editingMessage) return;
 
     const clientMessageId = crypto.randomUUID();
     const messageText = inputMessage;
     const currentReplyToId = replyingTo?.id || replyingTo?._id;
+    const chatId = chat.id || chat._id;
 
     setReplyTo(null);
+
+    // If editing, handle edit first
+    if (editingMessage) {
+      // Handle edit through REST API
+      try {
+        const token = localStorage.getItem("token");
+        const response = await fetch(
+          `${API_URL}/chats/${chatId}/messages/${editingMessage.id || editingMessage._id}`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              "x-auth-token": token,
+            },
+            body: JSON.stringify({ message: messageText }),
+          },
+        );
+
+        if (response.ok) {
+          toast.success("Message edited");
+          setEditingMessage(null);
+          setInputMessage("");
+          // Refresh messages
+          fetchMessages(1, false);
+        }
+      } catch (error) {
+        console.error("Error editing message:", error);
+        toast.error("Failed to edit message");
+      }
+      return;
+    }
+
+    // Clear input immediately
     setInputMessage("");
 
-    // Optimistic update
+    // Create optimistic message
     const tempMessage = {
-      _id: clientMessageId,
+      _id: `temp-${clientMessageId}`,
       clientMessageId,
       message: messageText,
       senderId: currentUserId,
       receiverId: otherUser.id || otherUser._id,
-      chatId: chat.id || chat._id,
+      chatId: chatId,
       createdAt: new Date().toISOString(),
       isRead: false,
       isDelivered: true,
@@ -957,33 +993,65 @@ function ChatWindow({
       replyTo: currentReplyToId,
     };
 
+    // Add optimistic message to UI
     setMessages((prev) => [...prev, tempMessage]);
     scrollToBottom();
 
-    try {
-      // ALWAYS use REST API to save to database
-      console.log("📤 Sending via REST API...");
-      const result = await onSendMessage(chat.id || chat._id, messageText, {
-        replyTo: currentReplyToId,
-        clientMessageId,
+    // Send via WebSocket first (faster)
+    let wsSent = false;
+    if (socketService && socketService.isConnected()) {
+      wsSent = socketService.sendMessage({
+        type: "new_message",
+        chatId: String(chatId),
+        message: messageText,
         messageType: "text",
+        senderId: currentUserId,
+        receiverId: otherUser.id || otherUser._id,
+        clientMessageId: clientMessageId,
+        replyTo: currentReplyToId,
       });
 
-      if (result) {
-        console.log("✅ Message saved to database:", result);
-        // Update the temp message with real data
-        setMessages((prev) =>
-          prev.map((msg) =>
-            msg.clientMessageId === clientMessageId
-              ? { ...result, status: "sent" }
-              : msg,
-          ),
-        );
-      } else {
-        throw new Error("REST API failed");
+      if (wsSent) {
+        console.log("📤 Message sent via WebSocket");
       }
+    }
+
+    // ALWAYS save to database via REST API
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${API_URL}/chats/${chatId}/messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-auth-token": token,
+        },
+        body: JSON.stringify({
+          message: messageText,
+          messageType: "text",
+          replyTo: currentReplyToId,
+          clientMessageId: clientMessageId,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to send message: ${response.status}`);
+      }
+
+      const result = await response.json();
+      console.log("✅ Message saved to database:", result);
+
+      // Replace temp message with real message
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.clientMessageId === clientMessageId
+            ? { ...result, status: "sent", _id: result.id || result._id }
+            : msg,
+        ),
+      );
     } catch (error) {
       console.error("❌ Failed to send message:", error);
+
+      // Mark message as failed
       setMessages((prev) =>
         prev.map((msg) =>
           msg.clientMessageId === clientMessageId
