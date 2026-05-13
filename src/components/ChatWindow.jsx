@@ -16,7 +16,6 @@ import {
 import { format } from "date-fns";
 import VoiceRecorder from "./VoiceRecorder";
 // Add this with other imports at the top of ChatWindow.jsx
-import socketService from "../services/socket";
 
 function ChatWindow({
   chat,
