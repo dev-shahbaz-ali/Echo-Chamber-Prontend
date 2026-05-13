@@ -1,6 +1,4 @@
 // src/services/socket.js
-import toast from "react-hot-toast";
-
 class WebSocketService {
   constructor() {
     this.ws = null;
@@ -24,13 +22,22 @@ class WebSocketService {
 
     this.isConnecting = true;
 
-    // Get WebSocket URL (replace http with ws, https with wss)
+    // Get WebSocket URL - FIXED for production
     const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
-    const baseUrl = apiUrl
-      .replace("/api", "")
-      .replace("http://", "ws://")
-      .replace("https://", "wss://");
-    const wsUrl = `${baseUrl}`;
+
+    // Parse the URL correctly
+    let wsUrl;
+    if (apiUrl.includes("localhost") || apiUrl.includes("127.0.0.1")) {
+      // Local development
+      wsUrl = "ws://localhost:5000";
+    } else {
+      // Production - Vercel doesn't support WebSockets, so we'll use polling instead
+      console.warn(
+        "⚠️ WebSockets not supported on Vercel. Using REST API polling.",
+      );
+      this.isConnecting = false;
+      return null;
+    }
 
     console.log("🔌 Connecting to WebSocket:", wsUrl);
 
@@ -42,7 +49,6 @@ class WebSocketService {
         this.isConnecting = false;
         this.reconnectAttempts = 0;
 
-        // Send authentication
         this.ws.send(
           JSON.stringify({
             type: "auth",
@@ -54,21 +60,16 @@ class WebSocketService {
       this.ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          console.log("📨 WebSocket message received:", data.type);
+          console.log("📨 WebSocket message:", data.type);
 
-          // Handle auth success
           if (data.type === "auth_success") {
             console.log("✅ WebSocket authenticated");
-            toast.success("Connected to chat server");
           }
 
-          // Handle auth error
           if (data.type === "auth_error") {
             console.error("❌ WebSocket auth error:", data.message);
-            toast.error("Connection error. Please refresh the page.");
           }
 
-          // Call registered handlers
           const handlers = this.messageHandlers.get(data.type) || [];
           handlers.forEach((handler) => handler(data));
         } catch (error) {
@@ -84,13 +85,19 @@ class WebSocketService {
       this.ws.onclose = () => {
         console.log("🔌 WebSocket disconnected");
         this.isConnecting = false;
-        this.attemptReconnect(token);
+        if (!this.isLocalDevelopment()) {
+          this.attemptReconnect(token);
+        }
       };
     } catch (error) {
       console.error("Failed to create WebSocket:", error);
       this.isConnecting = false;
-      this.attemptReconnect(token);
     }
+  }
+
+  isLocalDevelopment() {
+    const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+    return apiUrl.includes("localhost") || apiUrl.includes("127.0.0.1");
   }
 
   attemptReconnect(token) {
@@ -100,9 +107,7 @@ class WebSocketService {
     }
 
     this.reconnectAttempts++;
-    console.log(
-      `Reconnecting in ${this.reconnectDelay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`,
-    );
+    console.log(`Reconnecting in ${this.reconnectDelay}ms...`);
 
     setTimeout(() => {
       this.connect(token);
@@ -118,7 +123,7 @@ class WebSocketService {
 
   sendMessage(message) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.error("WebSocket is not connected");
+      console.warn("WebSocket not connected, message not sent via WS");
       return false;
     }
 
@@ -150,7 +155,5 @@ class WebSocketService {
   }
 }
 
-// Singleton instance
 const socketService = new WebSocketService();
 export default socketService;
-    

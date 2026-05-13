@@ -119,6 +119,66 @@ function ChatWindow({
         new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
     );
   };
+  // Add this useEffect in ChatWindow.jsx right after the other useEffects
+  // Poll for new messages (since WebSockets don't work on Vercel)
+  useEffect(() => {
+    if (!chat || (!chat.id && !chat._id)) return;
+
+    let pollInterval;
+    let lastMessageCount = messages.length;
+
+    const pollForNewMessages = async () => {
+      try {
+        const chatId = chat.id || chat._id;
+        const token = localStorage.getItem("token");
+        const response = await fetch(
+          `${API_URL}/chats/${chatId}/messages?page=1&limit=50`,
+          {
+            headers: { "x-auth-token": token },
+          },
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          const newMessages = data.messages || [];
+
+          if (newMessages.length !== messages.length) {
+            console.log("🔄 New messages detected via polling");
+            setMessages((prev) => {
+              // Merge messages without duplicates
+              const existingIds = new Set(prev.map((m) => m.id || m._id));
+              const uniqueNew = newMessages.filter(
+                (m) => !existingIds.has(m.id || m._id),
+              );
+              return [...prev, ...uniqueNew].sort(
+                (a, b) =>
+                  new Date(a.createdAt).getTime() -
+                  new Date(b.createdAt).getTime(),
+              );
+            });
+
+            // Scroll to bottom if new message received
+            if (
+              newMessages.length > messages.length &&
+              shouldAutoScrollRef.current
+            ) {
+              setTimeout(() => scrollToBottom(), 100);
+            }
+          }
+          lastMessageCount = newMessages.length;
+        }
+      } catch (error) {
+        console.error("Polling error:", error);
+      }
+    };
+
+    // Poll every 3 seconds
+    pollInterval = setInterval(pollForNewMessages, 3000);
+
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+    };
+  }, [chat, messages.length, API_URL, scrollToBottom]);
 
   const getMessageCreatedAt = (message) =>
     message?.createdAt || message?.created_at || message?.timestamp || null;
@@ -932,7 +992,7 @@ function ChatWindow({
     );
   };
 
-  // In ChatWindow.jsx - Replace the handleSendMessage function
+  // In ChatWindow.jsx - REPLACE the handleSendMessage function
   const handleSendMessage = async () => {
     if (!inputMessage.trim() && !editingMessage) return;
 
@@ -943,9 +1003,8 @@ function ChatWindow({
 
     setReplyTo(null);
 
-    // If editing, handle edit first
+    // Handle editing
     if (editingMessage) {
-      // Handle edit through REST API
       try {
         const token = localStorage.getItem("token");
         const response = await fetch(
@@ -964,8 +1023,9 @@ function ChatWindow({
           toast.success("Message edited");
           setEditingMessage(null);
           setInputMessage("");
-          // Refresh messages
           fetchMessages(1, false);
+        } else {
+          toast.error("Failed to edit message");
         }
       } catch (error) {
         console.error("Error editing message:", error);
@@ -974,7 +1034,7 @@ function ChatWindow({
       return;
     }
 
-    // Clear input immediately
+    // Clear input immediately for better UX
     setInputMessage("");
 
     // Create optimistic message
@@ -997,28 +1057,14 @@ function ChatWindow({
     setMessages((prev) => [...prev, tempMessage]);
     scrollToBottom();
 
-    // Send via WebSocket first (faster)
-    let wsSent = false;
-    if (socketService && socketService.isConnected()) {
-      wsSent = socketService.sendMessage({
-        type: "new_message",
-        chatId: String(chatId),
-        message: messageText,
-        messageType: "text",
-        senderId: currentUserId,
-        receiverId: otherUser.id || otherUser._id,
-        clientMessageId: clientMessageId,
-        replyTo: currentReplyToId,
-      });
-
-      if (wsSent) {
-        console.log("📤 Message sent via WebSocket");
-      }
-    }
-
-    // ALWAYS save to database via REST API
+    // ONLY USE REST API - WebSocket is optional for production
     try {
       const token = localStorage.getItem("token");
+      console.log(
+        "📤 Sending message via REST API to:",
+        `${API_URL}/chats/${chatId}/messages`,
+      );
+
       const response = await fetch(`${API_URL}/chats/${chatId}/messages`, {
         method: "POST",
         headers: {
@@ -1034,11 +1080,13 @@ function ChatWindow({
       });
 
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error("API Error:", response.status, errorText);
         throw new Error(`Failed to send message: ${response.status}`);
       }
 
       const result = await response.json();
-      console.log("✅ Message saved to database:", result);
+      console.log("✅ Message saved:", result);
 
       // Replace temp message with real message
       setMessages((prev) =>
@@ -1048,6 +1096,17 @@ function ChatWindow({
             : msg,
         ),
       );
+
+      // Mark as delivered/read
+      setTimeout(() => {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.clientMessageId === clientMessageId
+              ? { ...msg, isDelivered: true }
+              : msg,
+          ),
+        );
+      }, 500);
     } catch (error) {
       console.error("❌ Failed to send message:", error);
 
@@ -1059,7 +1118,7 @@ function ChatWindow({
             : msg,
         ),
       );
-      toast.error("Failed to send message");
+      toast.error("Failed to send message. Check console for details.");
     }
   };
 
