@@ -508,13 +508,15 @@ function ChatWindow({
     loadMessageContext(resId);
   };
 
+  // In ChatWindow.jsx - Replace the fetchMessages function
   const fetchMessages = useCallback(
     async (pageNum = 1, append = false) => {
-      // Safety check
       const chatId = chat?.id || chat?._id;
+
+      // Validate chatId
       if (!chatId) {
         console.error("Cannot fetch messages: chatId is undefined");
-        setMessages([]); // Set empty messages array
+        setMessages([]);
         setLoading(false);
         return;
       }
@@ -528,14 +530,26 @@ function ChatWindow({
         }
 
         const token = localStorage.getItem("token");
-        const response = await fetch(
-          `${API_URL}/chats/${chatId}/messages?page=${pageNum}&limit=50`,
-          { headers: { "x-auth-token": token } },
-        );
+        if (!token) {
+          console.error("No authentication token found");
+          setMessages([]);
+          setLoading(false);
+          return;
+        }
 
-        // Handle 404 specially
+        const url = `${API_URL}/chats/${chatId}/messages?page=${pageNum}&limit=50`;
+        console.log("📥 Fetching messages from:", url);
+
+        const response = await fetch(url, {
+          headers: {
+            "x-auth-token": token,
+            "Content-Type": "application/json",
+          },
+        });
+
+        // Handle 404 - chat exists but no messages yet (this is fine)
         if (response.status === 404) {
-          console.warn(`Chat ${chatId} not found or has no messages`);
+          console.log("No messages found for this chat yet");
           setMessages([]);
           setHasMore(false);
           setLoading(false);
@@ -543,13 +557,31 @@ function ChatWindow({
         }
 
         if (!response.ok) {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          const errorText = await response.text();
+          console.error(`HTTP ${response.status}:`, errorText);
+          throw new Error(`Failed to load messages: ${response.status}`);
         }
 
         const data = await response.json();
+        console.log(`✅ Loaded ${data.messages?.length || 0} messages`);
+
+        const newMessages = data.messages || [];
 
         if (append) {
-          setMessages((prev) => mergeMessages(prev, data.messages || []));
+          setMessages((prev) => {
+            const existingIds = new Set(prev.map((m) => m.id || m._id));
+            const uniqueNew = newMessages.filter(
+              (m) => !existingIds.has(m.id || m._id),
+            );
+            const merged = [...uniqueNew, ...prev];
+            merged.sort(
+              (a, b) =>
+                new Date(a.createdAt).getTime() -
+                new Date(b.createdAt).getTime(),
+            );
+            return merged;
+          });
+
           setTimeout(() => {
             if (messagesContainerRef.current) {
               const newScrollHeight = messagesContainerRef.current.scrollHeight;
@@ -558,12 +590,7 @@ function ChatWindow({
             }
           }, 0);
         } else {
-          setMessages((prev) =>
-            mergeMessages(
-              prev.filter((message) => isMessageForChat(message, chatId)),
-              data.messages || [],
-            ),
-          );
+          setMessages(newMessages);
           if (initialLoad) {
             setTimeout(() => scrollToBottom("auto"), 100);
             setInitialLoad(false);
@@ -573,7 +600,7 @@ function ChatWindow({
         setHasMore(data.currentPage < data.totalPages);
       } catch (error) {
         console.error("Error fetching messages:", error);
-        setMessages([]); // Set empty array on error
+        setMessages([]); // Set empty array on error to show empty state
       } finally {
         setLoading(false);
       }

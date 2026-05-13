@@ -83,9 +83,23 @@ function FriendsList({
     }
   };
 
+  // In FriendsList.jsx - Replace the startChat function
   const startChat = async (friend) => {
+    if (!friend || !friend.id) {
+      console.error("Invalid friend data:", friend);
+      toast.error("Cannot open chat: Invalid friend data");
+      return;
+    }
+
     try {
       const token = localStorage.getItem("token");
+      if (!token) {
+        toast.error("Please login again");
+        return;
+      }
+
+      const friendId = friend.id || friend.friend_id;
+      console.log("Opening chat with friend ID:", friendId);
 
       // Create or get chat
       const response = await fetch(`${API_URL}/chats`, {
@@ -94,24 +108,38 @@ function FriendsList({
           "Content-Type": "application/json",
           "x-auth-token": token,
         },
-        body: JSON.stringify({ otherUserId: friend.id || friend.friend_id }),
+        body: JSON.stringify({ otherUserId: friendId }),
       });
 
-      const data = await response.json();
-
-      if (response.ok && data) {
-        const chatObject = {
-          _id: data.id || data.chatId,
-          participants: [currentUser, friend],
-          otherParticipant: friend,
-        };
-        onSelectChat(chatObject);
-      } else {
-        toast.error("Cannot open chat yet");
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error("Chat API error:", response.status, errorData);
+        throw new Error(
+          errorData.error || `Failed to create chat: ${response.status}`,
+        );
       }
+
+      const data = await response.json();
+      console.log("Chat created/loaded:", data);
+
+      // Create chat object for the ChatWindow
+      const chatObject = {
+        id: data.id || data.chatId,
+        _id: data.id || data.chatId,
+        otherParticipant: {
+          id: friend.id,
+          _id: friend.id,
+          username: friend.username,
+          avatar: friend.avatar,
+          isOnline: friend.isOnline || false,
+          status: friend.status || "Hey there! 👋",
+        },
+      };
+
+      onSelectChat(chatObject);
     } catch (error) {
       console.error("Error starting chat:", error);
-      toast.error("Failed to start chat");
+      toast.error(error.message || "Failed to open chat");
     }
   };
 
