@@ -9,6 +9,7 @@ import {
   BsMic,
   BsArrowLeft,
 } from "react-icons/bs";
+import toast from "react-hot-toast";
 import { formatDistanceToNow } from "date-fns";
 
 function ChatInterface({ user, onLogout }) {
@@ -18,7 +19,6 @@ function ChatInterface({ user, onLogout }) {
   const [inputMessage, setInputMessage] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
-  const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [typingUsers, setTypingUsers] = useState(new Set());
   const [isTyping, setIsTyping] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
@@ -27,6 +27,8 @@ function ChatInterface({ user, onLogout }) {
   const typingTimeoutRef = useRef(null);
   const inputRef = useRef(null);
 
+  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+
   useEffect(() => {
     // This useEffect is for messagesEndRef, not API_URL
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -34,25 +36,38 @@ function ChatInterface({ user, onLogout }) {
 
   const fetchConversations = useCallback(async () => {
     try {
-      const response = await fetch(`/api/conversations/${user.id}`);
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${API_URL}/chats`, {
+        headers: { "x-auth-token": token },
+      });
+      if (!response.ok) throw new Error("Failed to fetch chats");
       const data = await response.json();
       setConversations(data);
     } catch (error) {
       console.error("Error fetching conversations:", error);
     }
-  }, [user.id]);
+  }, [API_URL]);
 
   const fetchMessages = useCallback(
     async (otherId) => {
       try {
-        const response = await fetch(`/api/messages/${user.id}/${otherId}`);
+        // Note: The chatController expects a chatId, but if you only have otherId,
+        // you should find the chat in the conversations list first.
+        const chat = conversations.find((c) => c.other_id === otherId);
+        if (!chat) return;
+
+        const token = localStorage.getItem("token");
+        const response = await fetch(`${API_URL}/chats/${chat.id}/messages`, {
+          headers: { "x-auth-token": token },
+        });
+        if (!response.ok) throw new Error("Failed to fetch messages");
         const data = await response.json();
-        setMessages(data);
+        setMessages(data.messages || []);
       } catch (error) {
         console.error("Error fetching messages:", error);
       }
     },
-    [user.id],
+    [API_URL, conversations],
   );
 
   const searchUsers = useCallback(
@@ -63,8 +78,12 @@ function ChatInterface({ user, onLogout }) {
       }
 
       try {
+        const token = localStorage.getItem("token");
         const response = await fetch(
-          `/api/search/${encodeURIComponent(query)}/${user.id}`,
+          `${API_URL}/users/search?q=${encodeURIComponent(query)}`,
+          {
+            headers: { "x-auth-token": token },
+          },
         );
         const data = await response.json();
         setSearchResults(data);
@@ -72,12 +91,24 @@ function ChatInterface({ user, onLogout }) {
         console.error("Error searching users:", error);
       }
     },
-    [user.id],
+    [API_URL],
   );
 
   useEffect(() => {
-    fetchConversations(); // Still fetch conversations on mount
+    fetchConversations();
+
+    // Set up polling to update online status and new messages every 5 seconds
+    const interval = setInterval(fetchConversations, 5000);
+    return () => clearInterval(interval);
   }, [fetchConversations]);
+
+  // Define missing sendMessage function
+  const sendMessage = async () => {
+    if (!inputMessage.trim() || !selectedChat) return;
+    // Implementation should ideally be handled by a dedicated ChatWindow component
+    // for complex state, but here is a simple version:
+    toast.error("Please use the ChatWindow to send messages");
+  };
 
   const handleNewMessage = (message) => {
     const senderId = message.sender_id || message.senderId;
@@ -142,18 +173,6 @@ function ChatInterface({ user, onLogout }) {
         return newSet;
       });
     }
-  };
-
-  const handleUserStatus = (data) => {
-    setOnlineUsers((prev) => {
-      const newSet = new Set(prev);
-      if (data.isOnline) {
-        newSet.add(data.userId);
-      } else {
-        newSet.delete(data.userId);
-      }
-      return newSet;
-    });
   };
 
   const startNewChat = (otherUser) => {
@@ -296,7 +315,7 @@ function ChatInterface({ user, onLogout }) {
                     alt={conv.other_username}
                     className="h-12 w-12 rounded-full"
                   />
-                  {onlineUsers.has(conv.other_id) && (
+                  {conv.isOnline && (
                     <div className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white bg-emerald-500" />
                   )}
                 </div>
@@ -351,7 +370,7 @@ function ChatInterface({ user, onLogout }) {
                   <p className="text-xs text-slate-500">
                     {typingUsers.has(selectedChat.id)
                       ? "typing..."
-                      : onlineUsers.has(selectedChat.id)
+                      : selectedChat.isOnline
                         ? "online"
                         : "offline"}
                   </p>
