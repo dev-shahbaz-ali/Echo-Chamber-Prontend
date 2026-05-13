@@ -76,17 +76,6 @@ function ChatInterface({ user, onLogout }) {
     [API_URL],
   );
 
-  // جب کوئی چیٹ سلیکٹ ہو تو ہر 3 سیکنڈ بعد نئے میسجز چیک کریں
-  useEffect(() => {
-    if (!selectedChat?.chatId) return;
-
-    const interval = setInterval(() => {
-      fetchMessages(selectedChat.chatId);
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [fetchMessages, selectedChat?.chatId]);
-
   const searchUsers = useCallback(
     async (query) => {
       if (!query.trim()) {
@@ -120,7 +109,7 @@ function ChatInterface({ user, onLogout }) {
   }, [fetchConversations]);
 
   const sendMessage = async () => {
-    if (!inputMessage.trim() || !selectedChat?.chatId) return;
+    if (!inputMessage.trim() || !(selectedChat?.chatId || selectedChat?.id)) return;
 
     const messageText = inputMessage;
     setInputMessage(""); // ان پٹ کو فوراً خالی کریں
@@ -128,7 +117,7 @@ function ChatInterface({ user, onLogout }) {
     try {
       const token = localStorage.getItem("token");
       const response = await fetch(
-        `${API_URL}/chats/${selectedChat.chatId}/messages`,
+        `${API_URL}/chats/${selectedChat.chatId || selectedChat.id}/messages`,
         {
           method: "POST",
           headers: {
@@ -219,26 +208,47 @@ function ChatInterface({ user, onLogout }) {
     }
   };
 
-  const startNewChat = (otherUser) => {
-    setSelectedChat(otherUser);
-    fetchMessages(otherUser.id);
-    setSearchQuery("");
-    setSearchResults([]);
-    if (window.innerWidth < 768) {
-      setShowSidebar(false);
+  const startNewChat = async (otherUser) => {
+    try {
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${API_URL}/chats`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-auth-token": token,
+        },
+        body: JSON.stringify({ otherUserId: otherUser.id }),
+      });
+      const data = await response.json();
+
+      const chatObj = {
+        id: otherUser.id,
+        username: otherUser.username,
+        avatar: otherUser.avatar,
+        chatId: data.id || data.chatId
+      };
+
+      setSelectedChat(chatObj);
+      fetchMessages(chatObj.chatId);
+      setSearchQuery("");
+      setSearchResults([]);
+      if (window.innerWidth < 768) setShowSidebar(false);
+    } catch (error) {
+      toast.error("Could not start chat");
     }
   };
 
   const selectChat = (conversation) => {
-    const otherUser = {
+    const chatObj = {
       id: conversation.other_id,
       username: conversation.other_username,
       avatar: conversation.other_avatar,
       unread_count: conversation.unread_count,
+      chatId: conversation.id || conversation.chatId
     };
 
-    setSelectedChat(otherUser);
-    fetchMessages(otherUser.id);
+    setSelectedChat(chatObj);
+    fetchMessages(chatObj.chatId);
     if (window.innerWidth < 768) {
       setShowSidebar(false);
     }
