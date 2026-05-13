@@ -137,7 +137,7 @@ function ChatWindow({
   }, []);
 
   // Add this useEffect in ChatWindow.jsx right after the other useEffects
-  // Poll for new messages (since WebSockets don't work on Vercel) - Improved polling logic
+  // Poll for new messages (since WebSockets don't work on Vercel)
   useEffect(() => {
     if (!chat || (!chat.id && !chat._id)) return;
 
@@ -158,21 +158,20 @@ function ChatWindow({
         if (response.ok) {
           const data = await response.json();
           const newMessages = data.messages || [];
-  
+
+          // Always merge messages to update status (sending -> sent) and catch new ones
           setMessages((prev) => {
-            const prevMessageIds = new Set(prev.map(m => m.id || m._id));
-            const trulyNewIncomingMessages = newMessages.filter(
-              (fm) => !prevMessageIds.has(fm.id || fm._id)
-            );
-  
-            const merged = mergeMessages(prev, newMessages); // Merge to update existing and add new
-  
-            // Only scroll if there are truly new incoming messages from the server
-            if (trulyNewIncomingMessages.length > 0 && shouldAutoScrollRef.current) {
+            const merged = mergeMessages(prev, newMessages);
+
+            // Only scroll if we actually got a brand new message from the other person
+            const hasNewIncoming = merged.length > prev.length;
+            if (hasNewIncoming && shouldAutoScrollRef.current) {
               setTimeout(() => scrollToBottom(), 100);
             }
+
             return merged;
           });
+          lastMessageCount = newMessages.length;
         }
       } catch (error) {
         console.error("Polling error:", error);
@@ -182,10 +181,10 @@ function ChatWindow({
     // Poll every 3 seconds
     pollInterval = setInterval(pollForNewMessages, 3000);
 
-    return () => { // Clean up interval on unmount or chat change
+    return () => {
       if (pollInterval) clearInterval(pollInterval);
     };
-  }, [chat?.id, chat?._id, API_URL, scrollToBottom, mergeMessages]);
+  }, [chat?.id, chat?._id, API_URL, scrollToBottom]);
 
   const getMessageCreatedAt = (message) =>
     message?.createdAt || message?.created_at || message?.timestamp || null;
