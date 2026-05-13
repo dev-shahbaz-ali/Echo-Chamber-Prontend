@@ -112,7 +112,8 @@ function ChatWindow({
 
     return next.sort(
       (a, b) =>
-        new Date(getMessageCreatedAt(a)).getTime() - new Date(getMessageCreatedAt(b)).getTime(),
+        new Date(getMessageCreatedAt(a)).getTime() -
+        new Date(getMessageCreatedAt(b)).getTime(),
     );
   };
 
@@ -185,7 +186,10 @@ function ChatWindow({
   }, [chat, messages.length, API_URL, scrollToBottom]);
 
   const getMessageCreatedAt = (message) =>
-    message?.createdAt || message?.created_at || message?.timestamp || new Date().toISOString();
+    message?.createdAt ||
+    message?.created_at ||
+    message?.timestamp ||
+    new Date().toISOString();
 
   const scrollToMessage = useCallback((messageId) => {
     requestAnimationFrame(() => {
@@ -293,7 +297,11 @@ function ChatWindow({
           }
         }
 
-        setHasMore(data.totalPages ? data.currentPage < data.totalPages : newMessages.length === 50);
+        setHasMore(
+          data.totalPages
+            ? data.currentPage < data.totalPages
+            : newMessages.length === 50,
+        );
       } catch (error) {
         console.error("Error fetching messages:", error);
         setMessages([]); // Set empty array on error to show empty state
