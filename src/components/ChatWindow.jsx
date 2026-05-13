@@ -47,10 +47,10 @@ function ChatWindow({
   const messagesContainerRef = useRef(null);
   const searchTimeoutRef = useRef(null);
   const messageRefs = useRef(new Map());
+  const typingTimeoutRef = useRef(null);
   const shouldAutoScrollRef = useRef(true);
 
-  // ✅ ADD THIS INSTEAD
-  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+  const API_URL = window.location.origin + "/api";
   const currentUserId = currentUser?.id || currentUser?._id;
   const otherUser =
     chat?.otherParticipant ||
@@ -113,8 +113,7 @@ function ChatWindow({
 
     return next.sort(
       (a, b) =>
-        new Date(getMessageCreatedAt(a)).getTime() -
-        new Date(getMessageCreatedAt(b)).getTime(),
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
     );
   };
 
@@ -159,18 +158,18 @@ function ChatWindow({
           const data = await response.json();
           const newMessages = data.messages || [];
 
-          if (newMessages.length !== messages.length) {
-            console.log("🔄 New messages detected via polling");
-            setMessages((prev) => mergeMessages(prev, newMessages));
+          // Always merge messages to update status (sending -> sent) and catch new ones
+          setMessages((prev) => {
+            const merged = mergeMessages(prev, newMessages);
 
-            // Scroll to bottom if new message received
-            if (
-              newMessages.length > messages.length &&
-              shouldAutoScrollRef.current
-            ) {
+            // Only scroll if we actually got a brand new message from the other person
+            const hasNewIncoming = merged.length > prev.length;
+            if (hasNewIncoming && shouldAutoScrollRef.current) {
               setTimeout(() => scrollToBottom(), 100);
             }
-          }
+
+            return merged;
+          });
           lastMessageCount = newMessages.length;
         }
       } catch (error) {
@@ -187,10 +186,7 @@ function ChatWindow({
   }, [chat, messages.length, API_URL, scrollToBottom]);
 
   const getMessageCreatedAt = (message) =>
-    message?.createdAt ||
-    message?.created_at ||
-    message?.timestamp ||
-    new Date().toISOString();
+    message?.createdAt || message?.created_at || message?.timestamp || null;
 
   const scrollToMessage = useCallback((messageId) => {
     requestAnimationFrame(() => {
@@ -280,7 +276,17 @@ function ChatWindow({
 
         if (append) {
           setMessages((prev) => {
-            return mergeMessages(prev, newMessages);
+            const existingIds = new Set(prev.map((m) => m.id || m._id));
+            const uniqueNew = newMessages.filter(
+              (m) => !existingIds.has(m.id || m._id),
+            );
+            const merged = [...uniqueNew, ...prev];
+            merged.sort(
+              (a, b) =>
+                new Date(a.createdAt).getTime() -
+                new Date(b.createdAt).getTime(),
+            );
+            return merged;
           });
 
           setTimeout(() => {
@@ -298,11 +304,7 @@ function ChatWindow({
           }
         }
 
-        setHasMore(
-          data.totalPages
-            ? data.currentPage < data.totalPages
-            : newMessages.length === 50,
-        );
+        setHasMore(data.currentPage < data.totalPages);
       } catch (error) {
         console.error("Error fetching messages:", error);
         setMessages([]); // Set empty array on error to show empty state
@@ -860,17 +862,11 @@ function ChatWindow({
           <button onClick={onBack} className="md:hidden text-gray-600">
             <BsArrowLeft size={20} />
           </button>
-          {otherUser.avatar ? (
-            <img
-              src={otherUser.avatar}
-              alt={otherUser.username}
-              className="w-10 h-10 rounded-full object-cover shadow-sm"
-            />
-          ) : (
-            <div className="w-10 h-10 rounded-full bg-green-500 flex items-center justify-center text-white font-bold shadow-sm">
-              {otherUser.username?.charAt(0).toUpperCase()}
-            </div>
-          )}
+          <img
+            src={otherUser.avatar}
+            alt={otherUser.username}
+            className="w-10 h-10 rounded-full object-cover"
+          />
           <div>
             <h3 className="font-semibold text-gray-800">
               {otherUser.username}
