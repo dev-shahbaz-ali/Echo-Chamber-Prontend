@@ -49,7 +49,8 @@ function ChatWindow({
   const messageRefs = useRef(new Map());
   const shouldAutoScrollRef = useRef(true);
 
-  const API_URL = window.location.origin + "/api";
+  // ✅ ADD THIS INSTEAD
+  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
   const currentUserId = currentUser?.id || currentUser?._id;
   const otherUser =
     chat?.otherParticipant ||

@@ -26,6 +26,7 @@ function Dashboard() {
   const wsRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
 
+  // ✅ ADD THIS INSTEAD
   const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
   // Initialize WebSocket with better handling

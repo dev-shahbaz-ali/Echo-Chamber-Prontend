@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { BsCheck, BsX, BsClock, BsPersonAdd } from "react-icons/bs";
 import toast from "react-hot-toast";
 
-// ✅ Use environment variable like AuthContext
+// ✅ ADD THIS INSTEAD
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 function FriendRequests({ onRequestAction, currentUser }) {

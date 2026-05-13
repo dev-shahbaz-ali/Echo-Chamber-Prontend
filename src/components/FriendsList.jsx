@@ -3,7 +3,7 @@ import React, { useState, useEffect } from "react";
 import { BsChat, BsPersonAdd } from "react-icons/bs";
 import toast from "react-hot-toast";
 
-// ✅ Use environment variable
+// ✅ ADD THIS INSTEAD
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 function FriendsList({
