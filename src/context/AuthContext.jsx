@@ -5,8 +5,11 @@ const AuthContext = createContext();
 
 export const useAuth = () => useContext(AuthContext);
 
-// API URL
-const API_URL = "/api";
+// ✅ FIXED: Use environment variable with fallback for local development
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+
+// Optional: Log the API URL being used (remove in production)
+console.log(`🔗 API URL: ${API_URL}`);
 
 const readResponseError = async (response) => {
   const contentType = response.headers.get("content-type") || "";
@@ -53,7 +56,10 @@ export const AuthProvider = ({ children }) => {
       ...options.headers,
     };
 
-    const response = await fetch(`${API_URL}${url}`, {
+    const fullUrl = `${API_URL}${url}`;
+    console.log(`📡 Fetching: ${fullUrl}`); // Debug log
+
+    const response = await fetch(fullUrl, {
       ...options,
       headers: defaultHeaders,
     });
