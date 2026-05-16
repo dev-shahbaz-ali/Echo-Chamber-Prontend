@@ -96,7 +96,8 @@ function ChatWindow({
         if (!incoming) return;
 
         const incomingClientId = incoming.clientMessageId || null;
-        const incomingId = incoming.id || incoming._id || null;
+        const incomingId =
+          incoming.id || incoming._id || incoming.messageId || null;
 
         const existingIndex = next.findIndex((msg) => {
           if (!msg) return false;
@@ -128,10 +129,11 @@ function ChatWindow({
         next.push(incoming);
       });
 
+      // Ensure we sort by date consistently using a fallback for different field names
       return next.sort(
         (a, b) =>
-          new Date(a.createdAt || a.created_at).getTime() -
-          new Date(b.createdAt || b.created_at).getTime(),
+          new Date(a.createdAt || a.created_at || a.timestamp).getTime() -
+          new Date(b.createdAt || b.created_at || b.timestamp).getTime(),
       );
     },
     [getMessageKey],
@@ -155,38 +157,38 @@ function ChatWindow({
   }, []);
 
   const markMessagesAsRead = useCallback(() => {
-    if (!realtimeClient || !activeChatId || messages.length === 0) return;
+    if (!realtimeClient || !activeChatId) return;
 
-    // Find messages from the other participant that haven't been read yet
-    const unreadIds = messages
-      .filter((msg) => {
-        const senderId =
-          msg.sender_id ||
-          msg.senderId?.id ||
-          msg.senderId?._id ||
-          msg.senderId;
-        return (
-          String(senderId) !== String(currentUserId) &&
-          !msg.isRead &&
-          !msg.isDeleted
-        );
-      })
-      .map((msg) => msg.id || msg._id);
+    setMessages((prev) => {
+      // Find messages from the other participant that haven't been read yet
+      const unreadIds = prev
+        .filter((msg) => {
+          const senderId =
+            msg.sender_id ||
+            msg.senderId?.id ||
+            msg.senderId?._id ||
+            msg.senderId;
+          return (
+            String(senderId) !== String(currentUserId) &&
+            !msg.isRead &&
+            !msg.isDeleted
+          );
+        })
+        .map((msg) => msg.id || msg._id);
 
-    if (unreadIds.length > 0) {
-      console.log(`👁️ Marking ${unreadIds.length} messages as read`);
-      realtimeClient.markMessagesAsRead(activeChatId, unreadIds);
+      if (unreadIds.length > 0) {
+        console.log(`👁️ Marking ${unreadIds.length} messages as read`);
+        realtimeClient.markMessagesAsRead(activeChatId, unreadIds);
 
-      // Optimistic update of local state
-      setMessages((prev) =>
-        prev.map((msg) =>
+        return prev.map((msg) =>
           unreadIds.includes(msg.id || msg._id)
             ? { ...msg, isRead: true }
             : msg,
-        ),
-      );
-    }
-  }, [realtimeClient, activeChatId, messages, currentUserId]);
+        );
+      }
+      return prev;
+    });
+  }, [realtimeClient, activeChatId, currentUserId]);
 
   // New handler for edited messages
   const handleMessageEdited = useCallback(
@@ -285,23 +287,12 @@ function ChatWindow({
         if (!response.ok) {
           const errorText = await response.text();
           console.error(`HTTP ${response.status}:`, errorText);
-          if (response.status === 403) {
-            toast.error(
-              "Access Denied: You are not a participant of this chat.",
-            );
-          }
           throw new Error(`Failed to load messages: ${response.status}`);
         }
 
         const data = await response.json();
-        console.log(`✅ Loaded ${data.messages?.length || 0} messages`);
-
-        const newMessages = data.messages || [];
-        // Always use mergeMessages for initial load and pagination to ensure no duplicates
+        const newMessages = Array.isArray(data.messages) ? data.messages : [];
         setMessages((prev) => mergeMessages(prev, newMessages));
-
-        // Mark newly loaded messages from other user as read
-        markMessagesAsRead();
 
         if (append) {
           setTimeout(() => {
@@ -321,20 +312,13 @@ function ChatWindow({
         setHasMore(data.currentPage < data.totalPages);
       } catch (error) {
         console.error("Error fetching messages:", error);
-        // DO NOT set empty array on error if we already have messages
-        if (initialLoad) setMessages([]);
+        toast.error("Failed to load chat history");
       } finally {
         setLoading(false);
+        setInitialLoad(false);
       }
     },
-    [
-      activeChatId,
-      initialLoad,
-      scrollToBottom,
-      API_URL,
-      mergeMessages,
-      markMessagesAsRead,
-    ],
+    [activeChatId, scrollToBottom, API_URL, mergeMessages],
   );
 
   // In ChatWindow.jsx - Update this useEffect
@@ -378,15 +362,6 @@ function ChatWindow({
     mergeMessages,
     isNearBottom,
   ]);
-
-  // Simplified effect: Only trigger initial fetch and setup trigger ref
-  useEffect(() => {
-    if (!activeChatId) return;
-
-    // On chat change, we only fetch once to load history.
-    // Real-time updates now rely 100% on WebSocket.
-    fetchMessages(1, false);
-  }, [activeChatId, fetchMessages]);
 
   // Mark messages as read effect (separate from polling to avoid loops)
   useEffect(() => {
@@ -440,15 +415,15 @@ function ChatWindow({
   // Load more messages when page changes
   useEffect(() => {
     if (page > 1) {
-      fetchMessages(page, true);
+      const timer = setTimeout(() => fetchMessages(page, true), 50);
+      return () => clearTimeout(timer);
     }
-  }, [page, fetchMessages]);
+  }, [page, activeChatId, fetchMessages]);
 
-  // Initial load
+  // Chat reset and initial history load
   useEffect(() => {
-    if (chat) {
+    if (activeChatId) {
       setInitialLoad(true);
-      setMessages([]);
       setPage(1);
       setHasMore(true);
       setContextMenu(null);
@@ -459,9 +434,15 @@ function ChatWindow({
       setSearchResults([]);
       setActiveSearchMessageId(null);
       shouldAutoScrollRef.current = true;
-      fetchMessages(1, false);
+
+      // Small delay to ensure state reset before fetch
+      const timer = setTimeout(() => {
+        setMessages([]);
+        fetchMessages(1, false);
+      }, 50);
+      return () => clearTimeout(timer);
     }
-  }, [activeChatId]);
+  }, [activeChatId, fetchMessages]);
 
   // Effect to handle sending typing status to backend
   useEffect(() => {
@@ -640,8 +621,8 @@ function ChatWindow({
         _id: `temp-${clientMessageId}`, // Mark as temporary
         clientMessageId,
         message: "",
-        senderId: currentUserId,
-        receiverId: otherUser.id || otherUser._id,
+        senderId: Number(currentUserId),
+        receiverId: Number(otherUser.id || otherUser._id),
         chatId: chatId,
         createdAt: new Date().toISOString(),
         isRead: false,
@@ -797,8 +778,8 @@ function ChatWindow({
       _id: `temp-${clientMessageId}`,
       clientMessageId,
       message: messageText,
-      senderId: currentUserId,
-      receiverId: otherUser.id || otherUser._id,
+      senderId: Number(currentUserId),
+      receiverId: Number(otherUser.id || otherUser._id),
       chatId: chatId,
       createdAt: new Date().toISOString(),
       isRead: false,
@@ -1107,10 +1088,10 @@ function ChatWindow({
 
         {messages.map((msg, idx) => {
           const senderId =
-            msg.sender_id ||
             msg.senderId?.id ||
             msg.senderId?._id ||
-            msg.senderId;
+            msg.senderId ||
+            msg.sender_id;
           const isOwn = String(senderId) === String(currentUserId);
 
           const showAvatar =
