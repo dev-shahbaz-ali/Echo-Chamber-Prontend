@@ -3,7 +3,7 @@ import { BsCheck, BsX, BsClock, BsPersonAdd } from "react-icons/bs";
 import toast from "react-hot-toast";
 
 // ✅ ADD THIS INSTEAD
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const API_URL = "/api";
 
 function FriendRequests({ onRequestAction, currentUser }) {
   const [requests, setRequests] = useState({ received: [], sent: [] });

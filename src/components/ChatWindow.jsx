@@ -24,6 +24,7 @@ function ChatWindow({
   onSendMessage,
   onBack,
   onChatCleared,
+  realtimeClient,
 }) {
   const [messages, setMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState("");
@@ -52,9 +53,10 @@ function ChatWindow({
   const typingTimeoutRef = useRef(null);
   const shouldAutoScrollRef = useRef(true);
 
-  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+  // Use relative path to match Dashboard.jsx and leverage Vite proxy
+  const API_URL = "/api";
   const currentUserId = currentUser?.id || currentUser?._id;
-  
+
   // Normalize Chat ID to ensure we always use the database ID for the conversation
   const activeChatId = chat?.chatId || chat?.id || chat?._id;
 
@@ -75,56 +77,66 @@ function ChatWindow({
     return String(mChatId) === String(chatId);
   }, []);
 
-  const getMessageKey = (message) =>
-    message?.id || message?._id || message?.clientMessageId || message?.tempId;
+  // --- BASE UTILITIES (Moved up to prevent initialization errors) ---
 
-  const mergeMessages = (prevMessages, incomingMessages) => {
-    const next = [...prevMessages];
+  const getMessageKey = useCallback(
+    (message) =>
+      message?.id ||
+      message?._id ||
+      message?.clientMessageId ||
+      message?.tempId,
+    [],
+  );
 
-    incomingMessages.forEach((incoming) => {
-      if (!incoming) return;
+  const mergeMessages = useCallback(
+    (prevMessages, incomingMessages) => {
+      const next = [...prevMessages];
 
-      const incomingClientId = incoming.clientMessageId || null;
-      const incomingId = incoming.id || incoming._id || null;
+      incomingMessages.forEach((incoming) => {
+        if (!incoming) return;
 
-      const existingIndex = next.findIndex((msg) => {
-        if (!msg) return false;
+        const incomingClientId = incoming.clientMessageId || null;
+        const incomingId = incoming.id || incoming._id || null;
 
-        if (incomingClientId && msg.clientMessageId === incomingClientId) {
-          return true;
+        const existingIndex = next.findIndex((msg) => {
+          if (!msg) return false;
+
+          if (incomingClientId && msg.clientMessageId === incomingClientId) {
+            return true;
+          }
+
+          if (incomingId && (msg.id === incomingId || msg._id === incomingId)) {
+            return true;
+          }
+
+          return false;
+        });
+
+        if (existingIndex !== -1) {
+          next[existingIndex] = {
+            ...next[existingIndex],
+            ...incoming,
+          };
+          return;
         }
 
-        if (incomingId && (msg.id === incomingId || msg._id === incomingId)) {
-          return true;
+        const key = getMessageKey(incoming);
+        if (key && next.some((msg) => getMessageKey(msg) === key)) {
+          return;
         }
 
-        return false;
+        next.push(incoming);
       });
 
-      if (existingIndex !== -1) {
-        next[existingIndex] = {
-          ...next[existingIndex],
-          ...incoming,
-        };
-        return;
-      }
+      return next.sort(
+        (a, b) =>
+          new Date(a.createdAt || a.created_at).getTime() -
+          new Date(b.createdAt || b.created_at).getTime(),
+      );
+    },
+    [getMessageKey],
+  );
 
-      const key = getMessageKey(incoming);
-      if (key && next.some((msg) => getMessageKey(msg) === key)) {
-        return;
-      }
-
-      next.push(incoming);
-    });
-
-    return next.sort(
-      (a, b) =>
-        new Date(a.createdAt || a.created_at).getTime() -
-        new Date(b.createdAt || b.created_at).getTime(),
-    );
-  };
-
-  // --- MOVED DEFINITIONS UP TO FIX INITIALIZATION ERROR ---
   const isNearBottom = useCallback(() => {
     const container = messagesContainerRef.current;
     if (!container) return true;
@@ -142,112 +154,92 @@ function ChatWindow({
     });
   }, []);
 
+  const markMessagesAsRead = useCallback(() => {
+    if (!realtimeClient || !activeChatId || messages.length === 0) return;
 
-useEffect(() => {
-  if (!activeChatId || !API_URL) return;
+    // Find messages from the other participant that haven't been read yet
+    const unreadIds = messages
+      .filter((msg) => {
+        const senderId =
+          msg.sender_id ||
+          msg.senderId?.id ||
+          msg.senderId?._id ||
+          msg.senderId;
+        return (
+          String(senderId) !== String(currentUserId) &&
+          !msg.isRead &&
+          !msg.isDeleted
+        );
+      })
+      .map((msg) => msg.id || msg._id);
 
-  let pollInterval;
-  let isPolling = false;
+    if (unreadIds.length > 0) {
+      console.log(`👁️ Marking ${unreadIds.length} messages as read`);
+      realtimeClient.markMessagesAsRead(activeChatId, unreadIds);
 
-  const pollForNewMessages = async () => {
-    if (isPolling) return;
-    isPolling = true;
-    
-    try {
-      const token = localStorage.getItem("token");
-      if (!token) {
-        isPolling = false;
-        return;
-      }
-      
-      const url = `${API_URL}/chats/${activeChatId}/messages?page=1&limit=50`;
-      
-      const response = await fetch(url, {
-        headers: { 
-          "x-auth-token": token,
-          "Content-Type": "application/json"
-        },
-      });
+      // Optimistic update of local state
+      setMessages((prev) =>
+        prev.map((msg) =>
+          unreadIds.includes(msg.id || msg._id)
+            ? { ...msg, isRead: true }
+            : msg,
+        ),
+      );
+    }
+  }, [realtimeClient, activeChatId, messages, currentUserId]);
 
-      if (response.ok) {
-        const data = await response.json();
-        const newMessages = data.messages || [];
-        
-        setMessages(prev => {
-          const currentIds = new Set(prev.map(m => m.id || m._id));
-          const uniqueNew = newMessages.filter(m => !currentIds.has(m.id || m._id));
-          
-          if (uniqueNew.length > 0) {
-            console.log(`✨ Polling found ${uniqueNew.length} new messages!`);
-            const sorted = [...newMessages].sort((a, b) => 
-              new Date(a.createdAt || a.created_at).getTime() - 
-              new Date(b.createdAt || b.created_at).getTime()
-            );
-            return sorted;
-          }
-          return prev;
-        });
-        
-        if (shouldAutoScrollRef.current) {
-          setTimeout(() => scrollToBottom("smooth"), 100);
+  // New handler for edited messages
+  const handleMessageEdited = useCallback(
+    (editedMessage) => {
+      if (isMessageForChat(editedMessage, activeChatId)) {
+        console.log("📝 Message edited via WS:", editedMessage);
+        setMessages((prev) => mergeMessages(prev, [editedMessage]));
+
+        // Only auto-scroll if user is already near the bottom
+        if (isNearBottom()) {
+          scrollToBottom("smooth"); // Scroll to bottom if it's a new edit arriving
         }
       }
-    } catch (error) {
-      console.error("Polling error:", error);
-    } finally {
-      isPolling = false;
-    }
-  };
-
-  // Store the polling function in ref so it can be called from handleSendMessage
-  triggerPollingRef.current = pollForNewMessages;
-  
-  // Poll immediately when chat opens
-  pollForNewMessages();
-  
-  // Then poll every 3 seconds
-  pollInterval = setInterval(pollForNewMessages, 3000);
-
-  return () => {
-    if (pollInterval) clearInterval(pollInterval);
-    triggerPollingRef.current = null;
-  };
-}, [activeChatId, API_URL]); // Remove mergeMessages and scrollToBottom from dependencies
-
-  const getMessageCreatedAt = (message) =>
-    message?.createdAt || message?.created_at || message?.timestamp || null;
-
-  const scrollToMessage = useCallback((messageId) => {
-    requestAnimationFrame(() => {
-      const node = messageRefs.current.get(messageId);
-      node?.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
-  }, []);
-
-  const focusMessageById = useCallback(
-    (messageId) => {
-      setActiveSearchMessageId(messageId);
-      scrollToMessage(messageId);
     },
-    [scrollToMessage],
+    [activeChatId, isMessageForChat, mergeMessages, scrollToBottom],
   );
 
-  const handleSearchResultClick = (result) => {
-    const resId = result.id || result._id;
-    setSearchQuery(result.message || "");
-    setShowSearchBar(false);
-    setSearchResults([]);
-    if (messages.some((message) => (message.id || message._id) === resId)) {
-      focusMessageById(resId);
-      return;
-    }
-    loadMessageContext(resId);
-  };
+  // New handler for deleted messages
+  const handleMessageDeleted = useCallback(
+    (deletedMessage) => {
+      if (isMessageForChat(deletedMessage, activeChatId)) {
+        console.log("🗑️ Message deleted via WS:", deletedMessage);
+        // The incoming deletedMessage should contain `isDeleted: true` and possibly `deletedStatus`
+        setMessages((prev) => mergeMessages(prev, [deletedMessage]));
+
+        if (isNearBottom()) {
+          scrollToBottom("smooth"); // Scroll to bottom if it's a new delete arriving
+        }
+      }
+    },
+    [activeChatId, isMessageForChat, mergeMessages, scrollToBottom],
+  );
+
+  // New handler for message read events
+  const handleMessageRead = useCallback(
+    (readEvent) => {
+      const { chatId, messageIds } = readEvent;
+      if (isSameChatId(chatId, activeChatId)) {
+        console.log("✅ Messages marked as read via WS:", messageIds);
+        setMessages((prev) =>
+          mergeMessages(
+            prev,
+            messageIds.map((id) => ({ id, isRead: true })),
+          ),
+        );
+      }
+    },
+    [activeChatId, isSameChatId, mergeMessages],
+  );
 
   // In ChatWindow.jsx - Replace the fetchMessages function
   const fetchMessages = useCallback(
     async (pageNum = 1, append = false) => {
-
       if (!activeChatId) {
         console.error("Cannot fetch messages: chatId is undefined");
         setMessages([]);
@@ -293,6 +285,11 @@ useEffect(() => {
         if (!response.ok) {
           const errorText = await response.text();
           console.error(`HTTP ${response.status}:`, errorText);
+          if (response.status === 403) {
+            toast.error(
+              "Access Denied: You are not a participant of this chat.",
+            );
+          }
           throw new Error(`Failed to load messages: ${response.status}`);
         }
 
@@ -300,22 +297,13 @@ useEffect(() => {
         console.log(`✅ Loaded ${data.messages?.length || 0} messages`);
 
         const newMessages = data.messages || [];
+        // Always use mergeMessages for initial load and pagination to ensure no duplicates
+        setMessages((prev) => mergeMessages(prev, newMessages));
+
+        // Mark newly loaded messages from other user as read
+        markMessagesAsRead();
 
         if (append) {
-          setMessages((prev) => {
-            const existingIds = new Set(prev.map((m) => m.id || m._id));
-            const uniqueNew = newMessages.filter(
-              (m) => !existingIds.has(m.id || m._id),
-            );
-            const merged = [...uniqueNew, ...prev];
-            merged.sort(
-              (a, b) =>
-                new Date(a.createdAt).getTime() -
-                new Date(b.createdAt).getTime(),
-            );
-            return merged;
-          });
-
           setTimeout(() => {
             if (messagesContainerRef.current) {
               const newScrollHeight = messagesContainerRef.current.scrollHeight;
@@ -324,7 +312,6 @@ useEffect(() => {
             }
           }, 0);
         } else {
-          setMessages(newMessages);
           if (initialLoad) {
             setTimeout(() => scrollToBottom("auto"), 100);
             setInitialLoad(false);
@@ -334,13 +321,109 @@ useEffect(() => {
         setHasMore(data.currentPage < data.totalPages);
       } catch (error) {
         console.error("Error fetching messages:", error);
-        setMessages([]); // Set empty array on error to show empty state
+        // DO NOT set empty array on error if we already have messages
+        if (initialLoad) setMessages([]);
       } finally {
         setLoading(false);
       }
     },
-    [activeChatId, initialLoad, scrollToBottom, API_URL],
+    [
+      activeChatId,
+      initialLoad,
+      scrollToBottom,
+      API_URL,
+      mergeMessages,
+      markMessagesAsRead,
+    ],
   );
+
+  // In ChatWindow.jsx - Update this useEffect
+  useEffect(() => {
+    if (!realtimeClient || !activeChatId) return;
+
+    // Only join if socket is connected
+    if (realtimeClient.isConnected) {
+      console.log("🎧 Setting up realtime listeners for chat:", activeChatId);
+
+      const handleNewMessage = (msg) => {
+        if (isMessageForChat(msg, activeChatId)) {
+          setMessages((prev) => mergeMessages(prev, [msg]));
+          if (isNearBottom()) {
+            scrollToBottom("smooth");
+          }
+        }
+      };
+
+      realtimeClient.on("new_message", handleNewMessage);
+      realtimeClient.joinChat(activeChatId);
+
+      return () => {
+        realtimeClient.off("new_message", handleNewMessage);
+      };
+    } else {
+      console.log("Waiting for socket connection...");
+      // Try again after a delay
+      const timer = setTimeout(() => {
+        if (realtimeClient && realtimeClient.isConnected) {
+          realtimeClient.joinChat(activeChatId);
+        }
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [
+    realtimeClient,
+    activeChatId,
+    isMessageForChat,
+    scrollToBottom,
+    mergeMessages,
+    isNearBottom,
+  ]);
+
+  // Simplified effect: Only trigger initial fetch and setup trigger ref
+  useEffect(() => {
+    if (!activeChatId) return;
+
+    // On chat change, we only fetch once to load history.
+    // Real-time updates now rely 100% on WebSocket.
+    fetchMessages(1, false);
+  }, [activeChatId, fetchMessages]);
+
+  // Mark messages as read effect (separate from polling to avoid loops)
+  useEffect(() => {
+    if (messages.length > 0) {
+      markMessagesAsRead();
+    }
+  }, [messages.length, markMessagesAsRead]);
+
+  const getMessageCreatedAt = (message) =>
+    message?.createdAt || message?.created_at || message?.timestamp || null;
+
+  const scrollToMessage = useCallback((messageId) => {
+    requestAnimationFrame(() => {
+      const node = messageRefs.current.get(messageId);
+      node?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }, []);
+
+  const focusMessageById = useCallback(
+    (messageId) => {
+      setActiveSearchMessageId(messageId);
+      scrollToMessage(messageId);
+    },
+    [scrollToMessage],
+  );
+
+  const handleSearchResultClick = (result) => {
+    const resId = result.id || result._id;
+    setSearchQuery(result.message || "");
+    setShowSearchBar(false);
+    setSearchResults([]);
+    if (messages.some((message) => (message.id || message._id) === resId)) {
+      focusMessageById(resId);
+      return;
+    }
+    loadMessageContext(resId);
+  };
 
   // Load older messages when scrolling up
   const handleScroll = useCallback(() => {
@@ -664,171 +747,135 @@ useEffect(() => {
     }
   };
 
-  // Mark messages as read
-  const markMessagesAsRead = async (messageIds = null) => {
-    const unreadMessages = messages.filter(
-      (m) =>
-        (m.receiver_id ||
-          m.receiverId?.id ||
-          m.receiverId?._id ||
-          m.receiverId) == currentUserId && !m.isRead,
-    );
-
-    if (unreadMessages.length === 0) return;
-
-    const ids = messageIds || unreadMessages.map((m) => m.id || m._id);
-
-    setMessages((prev) =>
-      prev.map((msg) =>
-        ids.includes(msg.id || msg._id) ? { ...msg, isRead: true } : msg,
-      ),
-    );
-  };
-
   // In ChatWindow.jsx - REPLACE the handleSendMessage function
-const handleSendMessage = async () => {
-  if (!inputMessage.trim() && !editingMessage) return;
+  const handleSendMessage = async () => {
+    if (!inputMessage.trim() && !editingMessage) return;
 
-  const clientMessageId = crypto.randomUUID();
-  const messageText = inputMessage;
-  const currentReplyToId = replyingTo?.id || replyingTo?._id;
-  const chatId = chat.id || chat._id;
+    const clientMessageId = crypto.randomUUID();
+    const messageText = inputMessage;
+    const currentReplyToId = replyingTo?.id || replyingTo?._id;
+    const chatId = chat.id || chat._id;
 
-  setReplyTo(null);
+    setReplyTo(null);
 
-  // Handle editing
-  if (editingMessage) {
-    try {
-      const token = localStorage.getItem("token");
-      const response = await fetch(
-        `${API_URL}/chats/${chatId}/messages/${editingMessage.id || editingMessage._id}`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            "x-auth-token": token,
+    // Handle editing
+    if (editingMessage) {
+      try {
+        const token = localStorage.getItem("token");
+        const response = await fetch(
+          `${API_URL}/chats/${chatId}/messages/${editingMessage.id || editingMessage._id}`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              "x-auth-token": token,
+            },
+            body: JSON.stringify({ message: messageText }),
           },
-          body: JSON.stringify({ message: messageText }),
-        },
-      );
+        );
 
-      if (response.ok) {
-        toast.success("Message edited");
-        setEditingMessage(null);
-        setInputMessage("");
-        fetchMessages(1, false);
-      } else {
+        if (response.ok) {
+          toast.success("Message edited");
+          setEditingMessage(null);
+          setInputMessage("");
+          fetchMessages(1, false);
+        } else {
+          toast.error("Failed to edit message");
+        }
+      } catch (error) {
+        console.error("Error editing message:", error);
         toast.error("Failed to edit message");
       }
-    } catch (error) {
-      console.error("Error editing message:", error);
-      toast.error("Failed to edit message");
-    }
-    return;
-  }
-
-  // Clear input immediately for better UX
-  setInputMessage("");
-
-  // Create optimistic message
-  const tempMessage = {
-    _id: `temp-${clientMessageId}`,
-    clientMessageId,
-    message: messageText,
-    senderId: currentUserId,
-    receiverId: otherUser.id || otherUser._id,
-    chatId: chatId,
-    createdAt: new Date().toISOString(),
-    isRead: false,
-    isDelivered: true,
-    messageType: "text",
-    status: "sending",
-    replyTo: currentReplyToId,
-  };
-
-  // Add optimistic message to UI
-  setMessages((prev) => [...prev, tempMessage]);
-  scrollToBottom();
-
-  // ONLY USE REST API - WebSocket is optional for production
-  try {
-    const token = localStorage.getItem("token");
-    console.log(
-      "📤 Sending message via REST API to:",
-      `${API_URL}/chats/${chatId}/messages`,
-    );
-
-    const response = await fetch(`${API_URL}/chats/${chatId}/messages`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-auth-token": token,
-      },
-      body: JSON.stringify({
-        message: messageText,
-        messageType: "text",
-        replyTo: currentReplyToId,
-        clientMessageId: clientMessageId,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("API Error:", response.status, errorText);
-      throw new Error(`Failed to send message: ${response.status}`);
+      return;
     }
 
-    const result = await response.json();
-    console.log("✅ Message saved:", result);
+    // Clear input immediately for better UX
+    setInputMessage("");
 
-    // Replace temp message with real message
-    setMessages((prev) =>
-      prev.map((msg) =>
-        msg.clientMessageId === clientMessageId
-          ? { ...result, status: "sent", _id: result.id || result._id }
-          : msg,
-      ),
-    );
+    // Create optimistic message
+    const tempMessage = {
+      _id: `temp-${clientMessageId}`,
+      clientMessageId,
+      message: messageText,
+      senderId: currentUserId,
+      receiverId: otherUser.id || otherUser._id,
+      chatId: chatId,
+      createdAt: new Date().toISOString(),
+      isRead: false,
+      isDelivered: true,
+      messageType: "text",
+      status: "sending",
+      replyTo: currentReplyToId,
+    };
 
-    // ✅ FORCE IMMEDIATE POLLING to get the message on the receiving end
-    // This ensures the message appears for both users
-    setTimeout(() => {
-      // Trigger the polling function if available
-      if (triggerPollingRef && triggerPollingRef.current) {
-        console.log("🔄 Triggering immediate polling after send");
-        triggerPollingRef.current();
+    // Add optimistic message to UI
+    setMessages((prev) => [...prev, tempMessage]);
+    scrollToBottom();
+
+    // ONLY USE REST API - WebSocket is optional for production
+    try {
+      const token = localStorage.getItem("token");
+      console.log(
+        "📤 Sending message via REST API to:",
+        `${API_URL}/chats/${chatId}/messages`,
+      );
+
+      const response = await fetch(`${API_URL}/chats/${chatId}/messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-auth-token": token,
+        },
+        body: JSON.stringify({
+          message: messageText,
+          messageType: "text",
+          replyTo: currentReplyToId,
+          clientMessageId: clientMessageId,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("API Error:", response.status, errorText);
+        throw new Error(`Failed to send message: ${response.status}`);
       }
-      
-      // Also force fetch messages directly
-      fetchMessages(1, false);
-    }, 500);
 
-    // Mark as delivered/read
-    setTimeout(() => {
+      const result = await response.json();
+      console.log("✅ Message saved:", result);
+
+      // Replace temp message with real message
       setMessages((prev) =>
         prev.map((msg) =>
           msg.clientMessageId === clientMessageId
-            ? { ...msg, isDelivered: true }
+            ? { ...result, status: "sent", _id: result.id || result._id }
             : msg,
         ),
       );
-    }, 1000);
-    
-  } catch (error) {
-    console.error("❌ Failed to send message:", error);
 
-    // Mark message as failed
-    setMessages((prev) =>
-      prev.map((msg) =>
-        msg.clientMessageId === clientMessageId
-          ? { ...msg, status: "failed" }
-          : msg,
-      ),
-    );
-    toast.error("Failed to send message. Check console for details.");
-  }
+      // Mark as delivered/read
+      setTimeout(() => {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.clientMessageId === clientMessageId
+              ? { ...msg, isDelivered: true }
+              : msg,
+          ),
+        );
+      }, 1000);
+    } catch (error) {
+      console.error("❌ Failed to send message:", error);
+
+      // Mark message as failed
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.clientMessageId === clientMessageId
+            ? { ...msg, status: "failed" }
+            : msg,
+        ),
+      );
+      toast.error("Failed to send message. Check console for details.");
+    }
   };
-  const triggerPollingRef = useRef(null);
 
   // Delete message
   const performDelete = async (forEveryone) => {
@@ -947,7 +994,9 @@ const handleSendMessage = async () => {
             </h3>
             <p className="text-xs text-gray-500">
               {isOtherUserTyping ? (
-                <span className="text-green-500 animate-pulse italic">typing...</span>
+                <span className="text-green-500 animate-pulse italic">
+                  typing...
+                </span>
               ) : otherUser.isOnline ? (
                 <span className="text-green-500">online</span>
               ) : (
@@ -1192,19 +1241,20 @@ const handleSendMessage = async () => {
                     <span className="text-[10px] text-gray-500">
                       {formatTime(getMessageCreatedAt(msg))}
                     </span>
-                    {isOwn && (
-                      <span className="text-[10px]">
-                        {msg.isRead ? (
-                          <span className="text-blue-500">✓✓</span>
-                        ) : msg.status === "sent" ? (
-                          <span className="text-gray-500">✓✓</span>
-                        ) : msg.status === "failed" ? (
-                          <span className="text-red-500">!</span>
-                        ) : (
-                          <span className="text-gray-400">✓</span>
-                        )}
-                      </span>
-                    )}
+                    {isOwn &&
+                      !msg.isDeleted && ( // Only show read status for own, non-deleted messages
+                        <span className="text-[10px]">
+                          {msg.isRead ? (
+                            <span className="text-blue-500">✓✓</span>
+                          ) : msg.status === "sent" ? (
+                            <span className="text-gray-500">✓✓</span>
+                          ) : msg.status === "failed" ? (
+                            <span className="text-red-500">!</span>
+                          ) : (
+                            <span className="text-gray-400">✓</span>
+                          )}
+                        </span>
+                      )}
                   </div>
                 </div>
               </div>

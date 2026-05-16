@@ -27,7 +27,7 @@ function ChatInterface({ user, onLogout }) {
   const typingTimeoutRef = useRef(null);
   const inputRef = useRef(null);
 
-  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+  const API_URL = "/api";
 
   useEffect(() => {
     // This useEffect is for messagesEndRef, not API_URL
@@ -102,14 +102,11 @@ function ChatInterface({ user, onLogout }) {
 
   useEffect(() => {
     fetchConversations();
-
-    // Set up polling to update online status and new messages every 5 seconds
-    const interval = setInterval(fetchConversations, 5000);
-    return () => clearInterval(interval);
   }, [fetchConversations]);
 
   const sendMessage = async () => {
-    if (!inputMessage.trim() || !(selectedChat?.chatId || selectedChat?.id)) return;
+    if (!inputMessage.trim() || !(selectedChat?.chatId || selectedChat?.id))
+      return;
 
     const messageText = inputMessage;
     setInputMessage(""); // ان پٹ کو فوراً خالی کریں
@@ -225,7 +222,7 @@ function ChatInterface({ user, onLogout }) {
         id: otherUser.id,
         username: otherUser.username,
         avatar: otherUser.avatar,
-        chatId: data.id || data.chatId
+        chatId: data.id || data.chatId,
       };
 
       setSelectedChat(chatObj);
@@ -244,7 +241,7 @@ function ChatInterface({ user, onLogout }) {
       username: conversation.other_username,
       avatar: conversation.other_avatar,
       unread_count: conversation.unread_count,
-      chatId: conversation.id || conversation.chatId
+      chatId: conversation.id || conversation.chatId,
     };
 
     setSelectedChat(chatObj);

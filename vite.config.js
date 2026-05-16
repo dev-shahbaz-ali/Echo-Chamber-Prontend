@@ -12,9 +12,9 @@ export default defineConfig({
         target: "http://localhost:5000", // Corrected backend port
         changeOrigin: true,
       },
-      // Proxy WebSocket connections (if using the same port)
-      "/ws": {
-        target: "ws://localhost:5000",
+      // Proxy Socket.io connections
+      "/socket.io": {
+        target: "http://localhost:5000",
         ws: true,
       },
     },

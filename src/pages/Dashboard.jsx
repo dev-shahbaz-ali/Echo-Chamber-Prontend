@@ -1,4 +1,4 @@
-// Dashboard.jsx - Fixed WebSocket implementation
+// Dashboard.jsx - FIXED VERSION
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "../context/AuthContext";
 import FriendsList from "../components/FriendsList";
@@ -11,6 +11,7 @@ import {
   BsThreeDotsVertical,
 } from "react-icons/bs";
 import toast from "react-hot-toast";
+import RealtimeClient from "../frontend-realtime-client";
 
 function Dashboard() {
   const { user, logout } = useAuth();
@@ -20,11 +21,43 @@ function Dashboard() {
   const [notificationCount, setNotificationCount] = useState(0);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [friendsRefreshKey, setFriendsRefreshKey] = useState(0);
+  const [realtimeClient, setRealtimeClient] = useState(null);
 
-  // ✅ ADD THIS INSTEAD
-  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+  // Use ref to track if socket is initialized
+  const socketInitialized = useRef(false);
 
-  // WebSocket logic removed for Vercel/Polling stability
+  const API_URL = "/api";
+
+  // Initialize Realtime Client - ONLY ONCE
+  useEffect(() => {
+    const initRealtime = async () => {
+      const token = localStorage.getItem("token");
+      if (user && token && !socketInitialized.current && !realtimeClient) {
+        socketInitialized.current = true;
+
+        const client = new RealtimeClient();
+        try {
+          await client.connect(token);
+          client.setupUser(user.id || user._id);
+          setRealtimeClient(client);
+          console.log("🚀 Realtime client connected and user setup");
+        } catch (error) {
+          console.error("Failed to connect realtime client:", error);
+          socketInitialized.current = false;
+        }
+      }
+    };
+
+    initRealtime();
+
+    // Cleanup only on unmount
+    return () => {
+      if (realtimeClient) {
+        realtimeClient.disconnect();
+        socketInitialized.current = false;
+      }
+    };
+  }, [user]); // Only re-run if user changes
 
   // Handle responsive sidebar
   useEffect(() => {
@@ -149,6 +182,7 @@ function Dashboard() {
               selectedChatId={selectedChat?._id || selectedChat?.id}
               currentUser={user}
               refreshKey={friendsRefreshKey}
+              realtimeClient={realtimeClient}
             />
           ) : (
             <FriendRequests
@@ -165,13 +199,13 @@ function Dashboard() {
 
       {/* Chat Area */}
       {selectedChat ? (
-        // In Dashboard.jsx - This is already there
         <ChatWindow
           chat={selectedChat}
           currentUser={user}
+          realtimeClient={realtimeClient}
           onSendMessage={sendMessage}
           onBack={handleBackToList}
-          onChatCleared={() => setFriendsRefreshKey((prev) => prev + 1)} // ✅ Already there
+          onChatCleared={() => setFriendsRefreshKey((prev) => prev + 1)}
         />
       ) : (
         <div className="flex-1 flex items-center justify-center bg-[#efeae2]">
